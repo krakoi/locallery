@@ -5,6 +5,13 @@ const server = Bun.serve({
   hostname: '127.0.0.1',
   port: Number(process.env.MOCK_PORT || 4097),
   async fetch(req) {
+    const path = new URL(req.url).pathname;
+    if (path === '/v1/models') {
+      return Response.json({ data: [{ id: 'mock' }] });
+    }
+    if (path === '/props') {
+      return Response.json({ model_path: 'mock.gguf', total_slots: 1 });
+    }
     const body = (await req.json()) as any;
     const parts = body.input?.[0]?.content || [];
     const vector = new Float32Array(768);

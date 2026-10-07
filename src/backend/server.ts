@@ -5,7 +5,7 @@ import { openDatabase, folders, getImage, imageSelect, toImage } from './db';
 import { initialProgress } from './indexer';
 import type { SearchRequest, SearchResult } from '../shared/types';
 
-const config = readConfig(process.env.LOCALLERY_CONFIG || 'config.yaml');
+const config = readConfig();
 const db = openDatabase(config);
 let progress = initialProgress(),
   lastLog = 0;
@@ -311,7 +311,7 @@ const server = Bun.serve({
         return new Response('Method not allowed', { status: 405 });
       }
 
-      const root = resolve('dist');
+      const root = resolve(import.meta.dir, '../../dist');
       const candidate = resolve(root, '.' + decodeURIComponent(path));
       if (!inside(root, candidate)) {
         return new Response('Forbidden', { status: 403 });

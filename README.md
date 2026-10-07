@@ -1,6 +1,6 @@
 # Locallery
 
-A local image gallery with semantic search, powered by EmbeddingGemma 2 through llama-server. Bun serves the API; Svelte provides the gallery. Your source folder is read-only.
+A local image gallery with semantic search, powered by EmbeddingGemma 2 through llama-server. Bun serves the API; Svelte provides the gallery. Source images are read-only; Locallery creates its own `.locallery` directory in the working folder.
 
 ## Requirements
 
@@ -15,15 +15,13 @@ Sharp and USearch are installed as project dependencies. Their native binaries m
 
 ```sh
 bun install
-cp config.example.yaml config.yaml
-# Edit library.path to point at your image folder.
 bun run build
 bun run start
 ```
 
-Open [localhost:3000](http://127.0.0.1:3000). The example configuration uses the photos in `test/images` when available. The backend rescans on every start, reusing unchanged embeddings. Use **Rescan library** to check for changes without restarting.
+Open [localhost:3000](http://127.0.0.1:3000). Without configuration, the working directory is the image library. The backend rescans on every start, reusing unchanged embeddings. Use **Rescan library** to check for changes without restarting.
 
-For development, `bun run dev` starts the backend and Vite together; open the Vite URL shown in the terminal. Set `LOCALLERY_CONFIG=/path/to/config.yaml` to select another configuration file. Configuration is read at startup.
+For development, `bun run dev` starts the backend and Vite together; open the Vite URL shown in the terminal. Configuration is read at startup. To index another working directory, run `bun /absolute/path/to/locallery/src/backend/server.ts` from that directory after building the frontend.
 
 Start your existing llama-server separately:
 
@@ -40,27 +38,31 @@ Use [ggml-org's GGUF weights](https://huggingface.co/ggml-org/embeddinggemma-2-G
 
 ## Configuration
 
+On first start, Locallery creates `~/.locallery/config.yml` with shared defaults:
+
 ```yaml
-library:
-  path: /absolute/path/to/images
-storage:
-  path: ./data
 server:
   host: 127.0.0.1
   port: 3000
 embedding:
   base_url: http://127.0.0.1:4096/v1
-  model: embeddinggemma-2
-  revision: embeddinggemma-2-Q8_0
-  concurrency: 1
   timeout_seconds: 60
 ```
 
-Relative paths resolve against the YAML file. Storage must be outside the image folder; symlinked storage paths are checked too. The app assumes trusted localhost access and provides no authentication.
+Every working directory gets its own `.locallery/` directory. An optional `.locallery/config.yml` overrides global server/embedding fields and can select a different library:
 
-`base_url` includes `/v1`. `revision` identifies the actual model weights: change it when changing the checkpoint or quantization, even if the model alias stays the same. Embedding model, revision, dimensions, and preprocessing changes invalidate previous embeddings. Changing the server address alone does not.
+```yaml
+library:
+  path: ./photos
+```
 
-Increase `concurrency` only if llama-server has capacity for concurrent requests. The default is one. There are no periodic scans or file watchers.
+Relative library paths resolve against the working directory. With no local config, or no `library.path`, the library is the working directory. The local config file is not generated automatically. Copy `config.example.yaml` to `.locallery/config.yml` if needed. `LOCALLERY_HOME` overrides the global configuration directory for isolated development environments. Legacy root `config.yaml` and `LOCALLERY_CONFIG` are no longer used.
+
+SQLite and previews always live in `<cwd>/.locallery/data/`; there is no `storage` setting. Scans skip all `.locallery` directories, including nested ones, so application previews cannot index themselves. Application directories must not be symlinks. Source images and their metadata are never edited. The app assumes trusted localhost access and provides no authentication.
+
+`base_url` must include `/v1`. Before every scan, Locallery discovers the single model from `/v1/models` and the model path and server slot count from `/props`. Manual `model`, `revision`, and `concurrency` configuration is no longer accepted. The model ID is supplied in embedding requests, and indexing concurrency follows `total_slots`. Slots express server capacity, not guaranteed throughput or available capacity when other clients share the server. Metadata failures stop scanning and are reported in indexing status; a manual rescan retries discovery.
+
+Cache identity includes the discovered model ID, model path, model metadata, dimensions, and preprocessing settings. The server does not expose a weights checksum: replacing weights or the projector in place while keeping the same reported identity requires deleting `.locallery/data` and rescanning. Router/multiple-model servers are not supported. The timeout remains a client request limit. There are no periodic scans or file watchers.
 
 ## Gallery
 
@@ -80,7 +82,7 @@ Images are oriented and resized to fit a **1,280 × 1,280 bounding box**, withou
 
 Supported input formats: JPEG, PNG, WebP, AVIF, GIF (first frame), TIFF (first page). Decoding support depends on the installed Sharp build. Symlinks and unsupported files are skipped; unreadable files and model errors are reported.
 
-The app stores metadata, file size/mtime, content hashes, processing state, Float32 embeddings, and group assignments in `data/library.sqlite`. JPEG previews live under `data/previews`. A scan checks size and nanosecond modification time first, then hashes new/changed files. Identical content reuses a cached embedding. Files deliberately edited while preserving both size and mtime are outside this change detector; removing the application data forces a fresh index.
+The app stores metadata, file size/mtime, content hashes, processing state, Float32 embeddings, and group assignments in `.locallery/data/library.sqlite`. JPEG previews live under `.locallery/data/previews`. A scan checks size and nanosecond modification time first, then hashes new/changed files. Identical content reuses a cached embedding. Files deliberately edited while preserving both size and mtime are outside this change detector; removing the application data forces a fresh index.
 
 Indexing blocks gallery functions. The browser and terminal report scan/embedding/ranking/grouping progress, reuse counts, failures, and ETA where meaningful. Completed embeddings are saved as processing proceeds. Failed files are retried on the next scan. Missing directories preserve their previous records; successful scans remove records for deleted files. There is no replay journal or stored vector snapshot.
 

@@ -1,6 +1,6 @@
 import { readConfig } from '../src/backend/config';
 
-const config = readConfig(process.env.LOCALLERY_CONFIG || 'config.yaml');
+const config = readConfig();
 const backend = Bun.spawn(['bun', '--watch', 'src/backend/server.ts'], {
   stdout: 'inherit',
   stderr: 'inherit',

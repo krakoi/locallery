@@ -26,12 +26,10 @@ test('rotates EXIF orientation, avoids upscaling, and rejects symlinked storage 
     expect(p.height).toBe(60);
     const info = await sharp(p.cache).metadata();
     expect(info.orientation).toBeUndefined();
-    await symlink(join(root, 'source'), join(root, 'alias'));
-    await Bun.write(
-      join(root, 'config.yaml'),
-      'library:\n  path: ./source\nstorage:\n  path: ./alias/cache\n',
-    );
-    expect(() => readConfig(join(root, 'config.yaml'))).toThrow('outside');
+    await symlink(join(root, 'source'), join(root, '.locallery'));
+    expect(() =>
+      readConfig({ cwd: root, globalDirectory: join(root, 'global') }),
+    ).toThrow('symlink');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

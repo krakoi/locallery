@@ -75,7 +75,7 @@ export async function scan(
       });
 
       for (const entry of entries) {
-        if (entry.isSymbolicLink()) {
+        if (entry.name === '.locallery' || entry.isSymbolicLink()) {
           p.skipped++;
           continue;
         }

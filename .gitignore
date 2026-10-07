@@ -8,3 +8,4 @@ config.yaml
 *.sqlite-shm
 .test-artifacts/
 .benchmark-results/
+.locallery/

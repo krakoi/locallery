@@ -18,7 +18,14 @@ test('HTTP lifecycle blocks indexing, emits SSE, serves images and supports manu
   const model = Bun.serve({
     hostname: '127.0.0.1',
     port: 0,
-    async fetch() {
+    async fetch(req) {
+      const path = new URL(req.url).pathname;
+      if (path === '/v1/models') {
+        return Response.json({ data: [{ id: 'mock' }] });
+      }
+      if (path === '/props') {
+        return Response.json({ model_path: 'mock.gguf', total_slots: 1 });
+      }
       await Bun.sleep(300);
       return Response.json({
         data: [{ embedding: [1, ...new Array(767).fill(0)] }],
@@ -32,15 +39,20 @@ test('HTTP lifecycle blocks indexing, emits SSE, serves images and supports manu
   });
   const port = reservation.port;
   reservation.stop(true);
+  await mkdir(join(root, '.locallery'), { recursive: true });
   await Bun.write(
-    join(root, 'config.yaml'),
-    `library:\n  path: ./source\nstorage:\n  path: ./data\nserver:\n  port: ${port}\nembedding:\n  base_url: http://127.0.0.1:${model.port}/v1\n`,
+    join(root, '.locallery', 'config.yml'),
+    `library:\n  path: ./source\nserver:\n  port: ${port}\nembedding:\n  base_url: http://127.0.0.1:${model.port}/v1\n`,
   );
-  const child = Bun.spawn(['bun', 'src/backend/server.ts'], {
-    env: { ...process.env, LOCALLERY_CONFIG: join(root, 'config.yaml') },
-    stdout: 'ignore',
-    stderr: 'pipe',
-  });
+  const child = Bun.spawn(
+    ['bun', join(process.cwd(), 'src/backend/server.ts')],
+    {
+      cwd: root,
+      env: { ...process.env, LOCALLERY_HOME: join(root, 'global') },
+      stdout: 'ignore',
+      stderr: 'pipe',
+    },
+  );
   const base = `http://127.0.0.1:${port}/api`;
   async function status() {
     return (await (await fetch(base + '/status')).json()) as any;

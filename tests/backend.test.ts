@@ -99,18 +99,15 @@ afterAll(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 
-test('validates configuration and protects input folder', async () => {
-  const yaml = join(directory, 'config.yaml');
-  await writeFile(
-    yaml,
-    'library:\n  path: ./source\nstorage:\n  path: ./source/cache\n',
-  );
-  expect(() => readConfig(yaml)).toThrow('outside');
-  await writeFile(
-    yaml,
-    'library:\n  path: ./source\nstorage:\n  path: ./data\nserver:\n  port: nope\n',
-  );
-  expect(() => readConfig(yaml)).toThrow('server.port');
+test('validates configuration and protects application storage', async () => {
+  const cwd = join(directory, 'bootstrap');
+  const globalDirectory = join(directory, 'global');
+  await mkdir(join(cwd, '.locallery'), { recursive: true });
+  const yaml = join(cwd, '.locallery', 'config.yml');
+  await writeFile(yaml, 'library:\n  path: ./.locallery/data\n');
+  expect(() => readConfig({ cwd, globalDirectory })).toThrow('outside');
+  await writeFile(yaml, 'server:\n  port: nope\n');
+  expect(() => readConfig({ cwd, globalDirectory })).toThrow('server.port');
 });
 test('incremental scan encodes cjpegli previews and preserves source bytes', async () => {
   await image('trip/red.png', 'red', 2000, 1000);

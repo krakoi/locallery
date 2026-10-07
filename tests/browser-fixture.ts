@@ -26,17 +26,29 @@ for (let i = 0; i < 201; i++) {
 const mock = Bun.serve({
   hostname: '127.0.0.1',
   port: 0,
-  fetch: () =>
-    Response.json({ data: [{ embedding: [1, ...new Array(767).fill(0)] }] }),
+  fetch(req) {
+    const path = new URL(req.url).pathname;
+    if (path === '/v1/models') {
+      return Response.json({ data: [{ id: 'mock' }] });
+    }
+    if (path === '/props') {
+      return Response.json({ model_path: 'mock.gguf', total_slots: 1 });
+    }
+    return Response.json({
+      data: [{ embedding: [1, ...new Array(767).fill(0)] }],
+    });
+  },
 });
 
+await mkdir(join(root, '.locallery'), { recursive: true });
 await Bun.write(
-  join(root, 'config.yaml'),
-  `library:\n  path: ./source\nstorage:\n  path: ./data\nserver:\n  port: 3002\nembedding:\n  base_url: http://127.0.0.1:${mock.port}/v1\n`,
+  join(root, '.locallery', 'config.yml'),
+  `library:\n  path: ./source\nserver:\n  port: 3002\nembedding:\n  base_url: http://127.0.0.1:${mock.port}/v1\n`,
 );
 
-const child = Bun.spawn(['bun', 'src/backend/server.ts'], {
-  env: { ...process.env, LOCALLERY_CONFIG: join(root, 'config.yaml') },
+const child = Bun.spawn(['bun', join(process.cwd(), 'src/backend/server.ts')], {
+  cwd: root,
+  env: { ...process.env, LOCALLERY_HOME: join(root, 'global') },
   stdout: 'inherit',
   stderr: 'inherit',
 });

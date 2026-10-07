@@ -2,7 +2,7 @@ import { openDatabase, vectorFrom, toImage, imageSelect } from './db';
 import { Vectors } from './vectors';
 import { scan, initialProgress } from './indexer';
 import { generateGroups } from './groups';
-import { embed } from './embedding';
+import { embed, discoverEmbeddingServer } from './embedding';
 import type { Config } from './config';
 import type { SearchRequest } from '../shared/types';
 
@@ -39,6 +39,11 @@ async function rescan() {
   report(progress);
 
   try {
+    report({
+      ...progress,
+      message: 'Discovering llama-server model and capacity',
+    });
+    await discoverEmbeddingServer(config);
     await scan(config, db, report);
 
     report({ ...progress, stage: 'ranking', message: 'Building vector index' });

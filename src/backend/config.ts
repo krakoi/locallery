@@ -1,6 +1,14 @@
-import { parse } from 'yaml';
+import { parse, stringify } from 'yaml';
+import { homedir } from 'node:os';
 import { resolve, relative, isAbsolute, dirname } from 'node:path';
-import { existsSync, realpathSync, readFileSync } from 'node:fs';
+import {
+  existsSync,
+  realpathSync,
+  readFileSync,
+  mkdirSync,
+  writeFileSync,
+  lstatSync,
+} from 'node:fs';
 
 export interface Config {
   library: { path: string };
@@ -37,103 +45,159 @@ function canonical(path: string): string {
     : resolve(canonical(parent), relative(parent, path));
 }
 
-export function readConfig(file: string): Config {
-  const raw = parse(readFileSync(file, 'utf8'));
+const defaults = {
+  server: { host: '127.0.0.1', port: 3000 },
+  embedding: { base_url: 'http://127.0.0.1:4096/v1', timeout_seconds: 60 },
+};
 
-  if (
-    !raw ||
-    typeof raw !== 'object' ||
-    typeof raw.library?.path !== 'string' ||
-    !raw.library.path.trim()
-  ) {
-    throw new Error('library.path must be a nonempty string');
+type Mapping = Record<string, unknown>;
+
+function mapping(value: unknown, name: string): Mapping {
+  if (value === undefined || value === null) {
+    return {};
   }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${name} must be a YAML mapping`);
+  }
+  return value as Mapping;
+}
 
-  for (const section of ['library', 'storage', 'server', 'embedding']) {
-    const value = raw[section];
-    if (
-      value !== undefined &&
-      (!value || typeof value !== 'object' || Array.isArray(value))
-    ) {
-      throw new Error(`${section} must be a YAML mapping`);
+function load(file: string) {
+  return existsSync(file)
+    ? mapping(parse(readFileSync(file, 'utf8')), file)
+    : {};
+}
+
+function directory(path: string) {
+  if (existsSync(path) && lstatSync(path).isSymbolicLink()) {
+    throw new Error(`Application directory must not be a symlink: ${path}`);
+  }
+  mkdirSync(path, { recursive: true });
+}
+
+export function readConfig(
+  options: { cwd?: string; globalDirectory?: string } = {},
+): Config {
+  const cwd = canonical(resolve(options.cwd || process.cwd()));
+  const globalDirectory = resolve(
+    options.globalDirectory ||
+      process.env.LOCALLERY_HOME ||
+      resolve(homedir(), '.locallery'),
+  );
+  directory(globalDirectory);
+  const globalFile = resolve(globalDirectory, 'config.yml');
+  if (!existsSync(globalFile)) {
+    try {
+      writeFileSync(globalFile, stringify(defaults), { flag: 'wx' });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+        throw error;
+      }
     }
   }
-
-  const base = dirname(resolve(file));
-
-  const text = (v: unknown, d: string, n: string) => {
-    if (v === undefined) {
-      return d;
+  const localDirectory = resolve(cwd, '.locallery');
+  directory(localDirectory);
+  directory(resolve(localDirectory, 'data'));
+  const global = load(globalFile);
+  const local = load(resolve(localDirectory, 'config.yml'));
+  for (const raw of [global, local]) {
+    if ('storage' in raw) {
+      throw new Error('storage is automatic; remove storage from config.yml');
     }
-    if (typeof v !== 'string' || !v.trim()) {
-      throw new Error(`${n} must be a nonempty string`);
+    for (const section of ['library', 'server', 'embedding']) {
+      if (raw[section] !== undefined) {
+        mapping(raw[section], section);
+      }
     }
-    return v;
+    const embedding = mapping(raw.embedding, 'embedding');
+    for (const name of ['model', 'revision', 'concurrency']) {
+      if (name in embedding) {
+        throw new Error(
+          `embedding.${name} is discovered from llama-server; remove it from config.yml`,
+        );
+      }
+    }
+  }
+  const server = {
+    ...mapping(global.server, 'server'),
+    ...mapping(local.server, 'server'),
   };
-
+  const embedding = {
+    ...mapping(global.embedding, 'embedding'),
+    ...mapping(local.embedding, 'embedding'),
+  };
+  const library = mapping(local.library, 'library');
+  const text = (value: unknown, fallback: string, name: string) => {
+    if (value === undefined) {
+      return fallback;
+    }
+    if (typeof value !== 'string' || !value.trim()) {
+      throw new Error(`${name} must be a nonempty string`);
+    }
+    return value;
+  };
   const number = (
-    v: unknown,
-    d: number,
+    value: unknown,
+    fallback: number,
     min: number,
     max: number,
-    n: string,
+    name: string,
   ) => {
-    if (v === undefined) {
-      return d;
+    if (value === undefined) {
+      return fallback;
     }
-    if (typeof v !== 'number' || !Number.isInteger(v) || v < min || v > max) {
-      throw new Error(`${n} must be an integer between ${min} and ${max}`);
+    if (
+      typeof value !== 'number' ||
+      !Number.isInteger(value) ||
+      value < min ||
+      value > max
+    ) {
+      throw new Error(`${name} must be an integer between ${min} and ${max}`);
     }
-    return v;
+    return value;
   };
-
   const config: Config = {
-    library: { path: canonical(resolve(base, raw.library.path)) },
-    storage: {
-      path: canonical(
-        resolve(base, text(raw.storage?.path, './data', 'storage.path')),
-      ),
+    library: {
+      path: canonical(resolve(cwd, text(library.path, '.', 'library.path'))),
     },
+    storage: { path: canonical(resolve(localDirectory, 'data')) },
     server: {
-      host: text(raw.server?.host, '127.0.0.1', 'server.host'),
-      port: number(raw.server?.port, 3000, 1, 65535, 'server.port'),
+      host: text(server.host, defaults.server.host, 'server.host'),
+      port: number(server.port, defaults.server.port, 1, 65535, 'server.port'),
     },
     embedding: {
       base_url: text(
-        raw.embedding?.base_url,
-        'http://127.0.0.1:4096/v1',
+        embedding.base_url,
+        defaults.embedding.base_url,
         'embedding.base_url',
       ).replace(/\/$/, ''),
-      model: text(raw.embedding?.model, 'embeddinggemma-2', 'embedding.model'),
-      revision: text(
-        raw.embedding?.revision,
-        'embeddinggemma-2-Q8_0',
-        'embedding.revision',
-      ),
-      concurrency: number(
-        raw.embedding?.concurrency,
-        1,
-        1,
-        16,
-        'embedding.concurrency',
-      ),
       timeout_seconds: number(
-        raw.embedding?.timeout_seconds,
-        60,
+        embedding.timeout_seconds,
+        defaults.embedding.timeout_seconds,
         1,
         3600,
         'embedding.timeout_seconds',
       ),
+      // Runtime values populated from llama-server before scanning.
+      model: '',
+      revision: '',
+      concurrency: 1,
     },
   };
-
-  if (inside(config.library.path, config.storage.path)) {
-    throw new Error('storage.path must be outside library.path');
+  if (
+    inside(config.storage.path, config.library.path) ||
+    config.library.path === canonical(localDirectory)
+  ) {
+    throw new Error('library.path must be outside application storage');
   }
-
   const url = new URL(config.embedding.base_url);
-  if (!['http:', 'https:'].includes(url.protocol)) {
-    throw new Error('embedding.base_url must use HTTP or HTTPS');
+  if (
+    !['http:', 'https:'].includes(url.protocol) ||
+    !url.pathname.endsWith('/v1')
+  ) {
+    throw new Error(
+      'embedding.base_url must use HTTP or HTTPS and end with /v1',
+    );
   }
   return config;
 }
