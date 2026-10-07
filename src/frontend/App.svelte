@@ -38,6 +38,16 @@
     loaded = false;
 
   const pageSize = 96;
+  const thresholdStorageKey = 'locallery.similarity-threshold.v1';
+  const similarityLevels = [
+    { name: 'All', threshold: -1 },
+    { name: 'Broad', threshold: 0.35 },
+    { name: 'Balanced', threshold: 0.5 },
+    { name: 'Strict', threshold: 0.65 },
+    { name: 'Very strict', threshold: 0.8 },
+  ];
+  let similarityLevel = $state(2);
+  let selectedSimilarity = $derived(similarityLevels[similarityLevel]);
 
   let currentFolder = $derived(folders.find((f) => f.id === folderId));
   let children = $derived(folders.filter((f) => f.parentId === folderId));
@@ -50,12 +60,20 @@
     }
     return chain;
   });
+  let filteredSearchItems = $derived(
+    searchItems.filter(
+      (image) =>
+        similarityLevel === 0 ||
+        (image.score ?? -1) >= selectedSimilarity.threshold,
+    ),
+  );
+  let resultCount = $derived(searchView ? filteredSearchItems.length : total);
   let visible = $derived(
     searchView
-      ? searchItems.slice((page - 1) * pageSize, page * pageSize)
+      ? filteredSearchItems.slice((page - 1) * pageSize, page * pageSize)
       : items,
   );
-  let pages = $derived(Math.max(1, Math.ceil(total / pageSize)));
+  let pages = $derived(Math.max(1, Math.ceil(resultCount / pageSize)));
   let title = $derived(
     searchView
       ? reference
@@ -77,6 +95,20 @@
 
   function label(entry: HistoryEntry) {
     return entry.query || 'Find similar';
+  }
+
+  function changeThreshold(value: number) {
+    similarityLevel = value;
+    page = 1;
+    viewer = null;
+    try {
+      localStorage.setItem(
+        thresholdStorageKey,
+        String(similarityLevels[value].threshold),
+      );
+    } catch {
+      // Keep the current setting even when browser storage is unavailable.
+    }
   }
 
   async function loadGallery() {
@@ -284,6 +316,28 @@
 
   onMount(() => {
     history = readHistory();
+    try {
+      const saved = localStorage.getItem(thresholdStorageKey);
+      const value = Number(saved);
+      if (
+        saved !== null &&
+        Number.isFinite(value) &&
+        value >= -1 &&
+        value <= 1
+      ) {
+        // Map an existing numeric preference to the nearest named level.
+        similarityLevel = similarityLevels.reduce(
+          (closest, level, index) =>
+            Math.abs(level.threshold - value) <
+            Math.abs(similarityLevels[closest].threshold - value)
+              ? index
+              : closest,
+          0,
+        );
+      }
+    } catch {
+      // Use the default threshold when browser storage is unavailable.
+    }
     const events = new EventSource('/api/events');
     events.onopen = () => {
       loaded = false;
@@ -476,7 +530,7 @@
             <h1>{title}</h1>
             <p>
               {searchView
-                ? `${total.toLocaleString()} matches${mode === 'folders' ? ` in ${currentFolder?.name || 'Library'} and its subfolders` : ' across your library'}`
+                ? `${resultCount.toLocaleString()} matches${mode === 'folders' ? ` in ${currentFolder?.name || 'Library'} and its subfolders` : ' across your library'}`
                 : mode === 'discover'
                   ? 'Images that belong together, without needing a label.'
                   : mode === 'history'
@@ -504,25 +558,61 @@
           </details>{/if}
         {#if error}<div class="error-message" role="alert">{error}</div>{/if}
         {#if mode === 'all' || mode === 'folders'}
-          <form
-            class="searchbox"
-            onsubmit={(e) => {
-              e.preventDefault();
-              void execute();
-            }}
-          >
-            <span class="search-icon">⌕</span><input
-              aria-label={reference ? 'Refine similar images' : 'Search images'}
-              bind:value={query}
-              placeholder={reference
-                ? 'Refine these images… try “outside” or “on the sofa”'
-                : 'Describe an image… “cats sleeping in the sunshine”'}
-            /><kbd>↵</kbd><button disabled={searching}
-              >{searching ? 'Searching…' : 'Search'}</button
+          <div class="search-controls">
+            <form
+              class="searchbox"
+              onsubmit={(e) => {
+                e.preventDefault();
+                void execute();
+              }}
             >
-          </form>
+              <span class="search-icon">⌕</span><input
+                aria-label={reference
+                  ? 'Refine similar images'
+                  : 'Search images'}
+                bind:value={query}
+                placeholder={reference
+                  ? 'Refine these images… try “outside” or “on the sofa”'
+                  : 'Describe an image… “cats sleeping in the sunshine”'}
+              /><kbd>↵</kbd><button disabled={searching}
+                >{searching ? 'Searching…' : 'Search'}</button
+              >
+            </form>
+            {#if searchView}<div class="similarity-filter">
+                <label for="similarity-threshold"
+                  >Search strictness
+                  <output for="similarity-threshold"
+                    >{selectedSimilarity.name}</output
+                  >
+                </label>
+                <input
+                  id="similarity-threshold"
+                  type="range"
+                  min="0"
+                  max={similarityLevels.length - 1}
+                  step="1"
+                  value={similarityLevel}
+                  aria-valuetext={selectedSimilarity.name}
+                  oninput={(event) =>
+                    changeThreshold(Number(event.currentTarget.value))}
+                />
+                <div class="similarity-labels" aria-hidden="true">
+                  {#each similarityLevels as level (level.name)}
+                    <span
+                      class={{
+                        selected: level.name === selectedSimilarity.name,
+                      }}>{level.name}</span
+                    >
+                  {/each}
+                </div>
+              </div>{/if}
+          </div>
           <div class="search-hint">
-            <span>Search by meaning, not by filename.</span><span
+            <span
+              >{searchView
+                ? `${resultCount} of ${searchItems.length} returned matches`
+                : 'Search by meaning, not by filename.'}</span
+            ><span
               >{mode === 'folders' && folderId !== 'root'
                 ? `${currentFolder?.name} + subfolders`
                 : 'Entire library'}</span
@@ -656,7 +746,7 @@
                     ? 'IN THIS GROUP'
                     : 'THE COLLECTION'}</span
             ><span
-              >{total.toLocaleString()} images {searchView
+              >{resultCount.toLocaleString()} images {searchView
                 ? '· best match first'
                 : '· sorted by path'}</span
             >
@@ -707,7 +797,7 @@
                 </h2>
                 <p>
                   {searchView
-                    ? 'Try another description or a different reference image.'
+                    ? 'Choose a broader search level, try another description, or choose a different reference image.'
                     : mode === 'folders'
                       ? 'Open a subfolder to continue exploring.'
                       : 'Check your configured image folder and rescan the library.'}

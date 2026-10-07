@@ -92,6 +92,8 @@ Large collections require disk space for previews and embeddings and RAM for the
 
 ## API
 
+Search returns up to 500 ranked candidates. The results screen filters those candidates instantly with a discrete Search strictness slider: All (no cutoff), Broad (0.35), Balanced (0.50, default), Strict (0.65), and Very strict (0.80). The browser remembers the setting and applies it to text, similar-image, refined, and replayed searches. Choose All to show all returned candidates. Existing numeric preferences map to the nearest named level. Counts and pagination follow the filtered results; changing the slider requires no additional model request. Scores are similarities, not confidence probabilities; the best cutoff depends on your images and query. This filter does not retrieve beyond the 500-candidate limit or change browsing and discovery groups.
+
 - `GET /api/status` — current job status and recent errors.
 - `GET /api/events` — SSE status, with an initial snapshot and reconnect support.
 - `POST /api/rescan` — request a scan; rejects overlapping jobs.
