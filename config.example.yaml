@@ -1,0 +1,13 @@
+library:
+  path: ./test/images
+storage:
+  path: ./data
+server:
+  host: 127.0.0.1
+  port: 3000
+embedding:
+  base_url: http://127.0.0.1:4096/v1
+  model: embeddinggemma-2
+  revision: embeddinggemma-2-Q8_0
+  concurrency: 1
+  timeout_seconds: 60

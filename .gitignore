@@ -1,0 +1,10 @@
+/test/images
+.agents/
+node_modules/
+dist/
+data/
+config.yaml
+*.sqlite-wal
+*.sqlite-shm
+.test-artifacts/
+.benchmark-results/
