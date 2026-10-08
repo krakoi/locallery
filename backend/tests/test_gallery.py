@@ -323,7 +323,10 @@ def test_scoped_approximate_ranking(library):
     assert all(key <= 10010 for key, _ in actual)
 
 
-def test_model_load_pins_processor_and_weights_to_same_commit(monkeypatch, tmp_path):
+@pytest.mark.parametrize("custom_cache", [False, True])
+def test_model_load_pins_processor_and_weights_to_same_commit(
+    monkeypatch, tmp_path, custom_cache
+):
     from types import SimpleNamespace
 
     import torch
@@ -332,6 +335,8 @@ def test_model_load_pins_processor_and_weights_to_same_commit(monkeypatch, tmp_p
 
     commit = "a" * 40
     calls = []
+    cache_dir = tmp_path / "models" if custom_cache else None
+    expected_cache = str(cache_dir) if cache_dir else None
     model_config = SimpleNamespace(model_type="embedding_gemma2", audio_config={})
 
     class Model:
@@ -343,30 +348,172 @@ def test_model_load_pins_processor_and_weights_to_same_commit(monkeypatch, tmp_p
             return self
 
     def load_config(model, **kwargs):
+        assert kwargs["cache_dir"] == expected_cache
         calls.append(("config", kwargs["revision"]))
         return model_config
 
     def load_processor(model, **kwargs):
+        assert kwargs["cache_dir"] == expected_cache
         calls.append(("processor", kwargs["revision"]))
         return object()
 
     def load_model(model, **kwargs):
+        assert kwargs["cache_dir"] == expected_cache
         calls.append(("model", kwargs["revision"]))
         assert kwargs["dtype"] == torch.float32
         assert kwargs["config"].audio_config is None
         return Model()
 
-    monkeypatch.setattr(
-        hub,
-        "cached_file",
-        lambda *args, **kwargs: f"/cache/snapshots/{commit}/config.json",
-    )
+    def cached_config(*args, **kwargs):
+        assert kwargs["cache_dir"] == expected_cache
+        return f"/cache/snapshots/{commit}/config.json"
+
+    monkeypatch.setattr(hub, "cached_file", cached_config)
     monkeypatch.setattr(transformers.AutoConfig, "from_pretrained", load_config)
     monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", load_processor)
     monkeypatch.setattr(transformers.AutoModel, "from_pretrained", load_model)
-    embedder = Embedder(Config(tmp_path, tmp_path / "data", device="cpu"))
+    embedder = Embedder(
+        Config(tmp_path, tmp_path / "data", device="cpu", cache_dir=cache_dir)
+    )
     embedder.load()
     assert calls == [("config", commit), ("processor", commit), ("model", commit)]
     assert len(embedder.fingerprint) == 64
     embedder.load()
     assert len(calls) == 3
+
+
+def test_startup_library_prompt_default_and_retry(tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace
+
+    from locallery.config import choose_library
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.stdin", SimpleNamespace(isatty=lambda: True))
+    prompts = []
+    answers = iter(["missing-folder", ""])
+
+    def answer():
+        prompts.append(True)
+        return next(answers)
+
+    monkeypatch.setattr("builtins.input", answer)
+    assert choose_library() == tmp_path
+    assert len(prompts) == 2
+    output = capsys.readouterr().err
+    assert str(tmp_path) in output
+    assert "Folder does not exist" in output
+    assert not (tmp_path / ".locallery" / "config.yml").exists()
+
+
+def test_startup_library_selection_is_not_persisted(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from locallery.config import choose_library
+
+    selected = tmp_path / "photos"
+    selected.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr("builtins.input", lambda: "photos")
+    monkeypatch.setenv("LOCALLERY_LIBRARY", str(choose_library()))
+    config = read_config(tmp_path, tmp_path / "global")
+    assert config.library == selected
+    assert config.storage == tmp_path / ".locallery" / "data"
+    assert not (tmp_path / ".locallery" / "config.yml").exists()
+    local = tmp_path / ".locallery" / "config.yml"
+    local.write_text("library:\n  path: unused\n")
+    assert read_config(tmp_path, tmp_path / "global").library == selected
+    assert local.read_text() == "library:\n  path: unused\n"
+
+
+def test_startup_library_noninteractive_and_explicit(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from locallery.config import choose_library
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.stdin", SimpleNamespace(isatty=lambda: False))
+    assert choose_library() == tmp_path
+    folder = tmp_path / "photos"
+    folder.mkdir()
+    assert choose_library("photos") == folder
+    with pytest.raises(ValueError, match="existing directory"):
+        choose_library("missing")
+
+
+@pytest.mark.parametrize("filename", [None, "config.yaml", "config.yml"])
+def test_existing_local_directory_skips_prompt(tmp_path, monkeypatch, filename):
+    from types import SimpleNamespace
+
+    from locallery.config import choose_library
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("LOCALLERY_LIBRARY", raising=False)
+    monkeypatch.setattr("sys.stdin", SimpleNamespace(isatty=lambda: True))
+
+    def unexpected_prompt():
+        pytest.fail("Existing .locallery must not prompt")
+
+    monkeypatch.setattr("builtins.input", unexpected_prompt)
+    local = tmp_path / ".locallery"
+    local.mkdir()
+    if filename:
+        (local / filename).write_text(
+            "library:\n  path: photos\nserver:\n  port: 3456\n"
+        )
+    assert choose_library() is None
+    config = read_config(tmp_path, tmp_path / "global")
+    assert config.library == (tmp_path / "photos" if filename else tmp_path)
+    assert config.port == (3456 if filename else 3000)
+    assert sorted(p.name for p in local.glob("config.*")) == (
+        [filename] if filename else []
+    )
+    assert choose_library(str(tmp_path)) == tmp_path
+
+
+def test_local_yaml_precedes_yml(tmp_path, monkeypatch):
+    monkeypatch.delenv("LOCALLERY_LIBRARY", raising=False)
+    local = tmp_path / ".locallery"
+    local.mkdir()
+    (local / "config.yml").write_text("library:\n  path: older\n")
+    (local / "config.yaml").write_text("library:\n  path: preferred\n")
+    assert read_config(tmp_path, tmp_path / "global").library == tmp_path / "preferred"
+
+
+@pytest.mark.parametrize(
+    "value", [None, ".", "./models", "/opt/model-cache", "~/models"]
+)
+def test_model_cache_path_resolution(tmp_path, monkeypatch, value):
+    from pathlib import Path
+
+    import yaml
+    from locallery.config import SOURCE_ROOT
+
+    monkeypatch.delenv("LOCALLERY_LIBRARY", raising=False)
+    global_dir = tmp_path / "global"
+    global_dir.mkdir()
+    config_file = global_dir / "config.yml"
+    config_file.write_text(yaml.safe_dump({"embedding": {"cache_dir": value}}))
+    config = read_config(tmp_path, global_dir)
+    expected = (SOURCE_ROOT / Path(value).expanduser()).resolve() if value else None
+    assert config.cache_dir == expected
+    assert config_file.read_text() == yaml.safe_dump(
+        {"embedding": {"cache_dir": value}}
+    )
+    assert not (tmp_path / "models").exists()
+    local = tmp_path / ".locallery" / "config.yaml"
+    local.write_text("embedding:\n  cache_dir: ./local-models\n")
+    assert read_config(tmp_path, global_dir).cache_dir == SOURCE_ROOT / "local-models"
+
+
+@pytest.mark.parametrize("value", ["", 123, False, []])
+def test_invalid_model_cache_path(tmp_path, value):
+    import yaml
+
+    global_dir = tmp_path / "global"
+    global_dir.mkdir()
+    (global_dir / "config.yml").write_text(
+        yaml.safe_dump({"embedding": {"cache_dir": value}})
+    )
+    with pytest.raises(ValueError, match="embedding.cache_dir"):
+        read_config(tmp_path, global_dir)

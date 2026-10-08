@@ -45,19 +45,27 @@ class Embedder:
                 else "float32"
             )
         resolved_dtype = getattr(torch, dtype)
-        config_file = cached_file(config.model, "config.json", revision=config.revision)
+        cache_dir = str(config.cache_dir) if config.cache_dir is not None else None
+        config_file = cached_file(
+            config.model, "config.json", revision=config.revision, cache_dir=cache_dir
+        )
         commit = extract_commit_hash(config_file, None)
         revision = commit or config.revision
-        model_config = AutoConfig.from_pretrained(config.model, revision=revision)
+        model_config = AutoConfig.from_pretrained(
+            config.model, revision=revision, cache_dir=cache_dir
+        )
         if getattr(model_config, "model_type", None) != "embedding_gemma2":
             raise ValueError("embedding.model must be an EmbeddingGemma 2 checkpoint")
         # Only vision and text are used; avoid loading the independent audio tower.
         model_config.audio_config = None
-        processor = AutoProcessor.from_pretrained(config.model, revision=revision)
+        processor = AutoProcessor.from_pretrained(
+            config.model, revision=revision, cache_dir=cache_dir
+        )
         model = (
             AutoModel.from_pretrained(
                 config.model,
                 revision=revision,
+                cache_dir=cache_dir,
                 config=model_config,
                 dtype=resolved_dtype,
             )

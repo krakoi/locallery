@@ -9,6 +9,7 @@ config.yaml
 .test-artifacts/
 .benchmark-results/
 .locallery/
+/models/
 
 .venv/
 __pycache__/

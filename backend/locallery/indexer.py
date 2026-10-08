@@ -34,7 +34,12 @@ def initial_progress():
 
 def scan(config, db, embedder, report):
     progress = initial_progress()
-    progress.update(stage="discovering", message="Discovering images and videos")
+    progress.update(
+        stage="discovering",
+        message="Discovering images and videos"
+        if config.video.enabled
+        else "Discovering images (video scanning disabled)",
+    )
     complete = True
     files, seen, seen_folders = [], set(), {"root"}
     fingerprint = embedder.fingerprint
@@ -74,10 +79,12 @@ def scan(config, db, embedder, report):
                     elif entry.is_dir(follow_symlinks=False):
                         walk(path, folder_id)
                     elif entry.is_file(follow_symlinks=False):
-                        if (
-                            PurePosixPath(entry.name).suffix.lower()
-                            in SUPPORTED | SUPPORTED_VIDEOS
-                        ):
+                        suffix = PurePosixPath(entry.name).suffix.lower()
+                        if suffix in SUPPORTED_VIDEOS and not config.video.enabled:
+                            # Keep previously indexed videos that still exist.
+                            seen.add(path)
+                            progress["skipped"] += 1
+                        elif suffix in SUPPORTED | SUPPORTED_VIDEOS:
                             files.append(path)
                             seen.add(path)
                             progress["discovered"] += 1

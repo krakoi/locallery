@@ -1,6 +1,7 @@
 """Global defaults and working-directory library configuration."""
 
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -9,14 +10,17 @@ import yaml
 from .videos import VideoSettings
 
 PREPROCESS = "pillow-jpegli-q90-srgb-white-oriented-fit1280-v1"
+SOURCE_ROOT = Path(__file__).resolve().parents[2]
 DEFAULTS = {
     "server": {"host": "127.0.0.1", "port": 3000},
     "embedding": {
         "model": "google/embeddinggemma-2",
         "device": "auto",
         "dtype": "auto",
+        "cache_dir": None,
     },
     "video": {
+        "enabled": True,
         "fps": 1,
         "max_frames": 32,
         "overflow_strategy": "uniform",
@@ -36,6 +40,7 @@ class Config:
     device: str = "auto"
     dtype: str = "auto"
     video: VideoSettings = field(default_factory=VideoSettings)
+    cache_dir: Path | None = None
 
 
 def inside(root: Path, path: Path) -> bool:
@@ -60,6 +65,43 @@ def load(path: Path):
     return mapping(yaml.safe_load(path.read_text()), str(path)) if path.exists() else {}
 
 
+def local_config_file(directory: Path) -> Path:
+    """Prefer config.yaml while retaining compatibility with config.yml."""
+    path = directory / "config.yaml"
+    return path if path.exists() else directory / "config.yml"
+
+
+def choose_library(value: str | None = None) -> Path | None:
+    """Select a launch-only library without persisting a local override."""
+    if value is not None:
+        path = Path(value).expanduser().resolve()
+        if not path.is_dir():
+            raise ValueError(f"Album folder is not an existing directory: {path}")
+        return path
+    local_dir = Path.cwd() / ".locallery"
+    if local_dir.is_symlink():
+        raise ValueError(f"Application directory must not be a symlink: {local_dir}")
+    if local_dir.is_dir():
+        return None
+    if not sys.stdin.isatty():
+        return Path.cwd().resolve()
+    while True:
+        try:
+            print(
+                f"Photo/video album folder [{Path.cwd()}]: ",
+                end="",
+                file=sys.stderr,
+                flush=True,
+            )
+            answer = input().strip()
+        except EOFError:
+            answer = ""
+        path = Path(answer or ".").expanduser().resolve()
+        if path.is_dir():
+            return path
+        print(f"Folder does not exist or is not a directory: {path}", file=sys.stderr)
+
+
 def read_config(cwd: Path | None = None, global_directory: Path | None = None):
     cwd = (cwd or Path.cwd()).resolve()
     global_directory = (
@@ -77,7 +119,7 @@ def read_config(cwd: Path | None = None, global_directory: Path | None = None):
     local_dir = cwd / ".locallery"
     directory(local_dir)
     directory(local_dir / "data")
-    global_raw, local_raw = load(global_file), load(local_dir / "config.yml")
+    global_raw, local_raw = load(global_file), load(local_config_file(local_dir))
     for raw in (global_raw, local_raw):
         if "storage" in raw:
             raise ValueError("storage is automatic; remove storage from config.yml")
@@ -105,6 +147,7 @@ def read_config(cwd: Path | None = None, global_directory: Path | None = None):
         "revision",
         "device",
         "dtype",
+        "cache_dir",
         "base_url",
         "timeout_seconds",
         "concurrency",
@@ -124,7 +167,8 @@ def read_config(cwd: Path | None = None, global_directory: Path | None = None):
     library = (
         cwd
         / text(
-            mapping(local_raw.get("library"), "library").get("path", "."),
+            os.environ.get("LOCALLERY_LIBRARY")
+            or mapping(local_raw.get("library"), "library").get("path", "."),
             "library.path",
         )
     ).resolve()
@@ -138,6 +182,11 @@ def read_config(cwd: Path | None = None, global_directory: Path | None = None):
     revision = embedding.get("revision")
     if revision is not None:
         revision = text(revision, "embedding.revision")
+    cache_dir = embedding.get("cache_dir")
+    if cache_dir is not None:
+        cache_dir = (
+            SOURCE_ROOT / Path(text(cache_dir, "embedding.cache_dir")).expanduser()
+        ).resolve()
     device = text(embedding["device"], "embedding.device")
     if device not in ("auto", "cpu", "cuda", "mps") and not (
         device.startswith("cuda:") and device[5:].isdigit()
@@ -155,6 +204,8 @@ def read_config(cwd: Path | None = None, global_directory: Path | None = None):
     )
     if set(video) - set(DEFAULTS["video"]):
         raise ValueError("Unknown video settings")
+    if not isinstance(video["enabled"], bool):
+        raise ValueError("video.enabled must be true or false")
     fps = video["fps"]
     if isinstance(fps, bool) or not isinstance(fps, (float, int)) or not 0 < fps <= 60:
         raise ValueError("video.fps must be greater than 0 and at most 60")
@@ -175,4 +226,5 @@ def read_config(cwd: Path | None = None, global_directory: Path | None = None):
         device,
         dtype,
         VideoSettings(**video),
+        cache_dir,
     )

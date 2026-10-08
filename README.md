@@ -13,7 +13,11 @@ bun run build
 bun run start
 ```
 
-Open [localhost:3000](http://127.0.0.1:3000). The default image library is the working directory. The first start downloads the original [Google checkpoint](https://huggingface.co/google/embeddinggemma-2) into Hugging Face's normal cache, then loads it into memory. A local Transformers checkpoint directory can be configured instead. GGUF weights and a llama-server are no longer used.
+If the current directory already contains `.locallery`, startup skips the folder prompt and uses its configured `library.path`, or the current directory when no path is configured. Local settings are read from `.locallery/config.yaml`, falling back to `.locallery/config.yml`; `config.yaml` takes precedence if both exist.
+
+Otherwise, startup asks for the photo/video album folder in the terminal. Press Enter to use the current working directory, or enter another directory (relative paths and `~` are supported). This choice applies only to that run and does not create or change a local configuration file. Without an interactive terminal, a new library uses the current directory. Pass `--library /path/to/photos` to explicitly override the folder and skip the prompt, for example `bun run start --library /path/to/photos`. Development reloads retain the selection without asking again.
+
+Open [localhost:3000](http://127.0.0.1:3000). The first start downloads the original [Google checkpoint](https://huggingface.co/google/embeddinggemma-2) into Hugging Face's normal cache, then loads it into memory. A local Transformers checkpoint directory can be configured instead. GGUF weights and a llama-server are no longer used.
 
 For NVIDIA CUDA 12.8 wheels:
 
@@ -31,7 +35,7 @@ cd /path/to/photos
 /absolute/path/to/locallery/run.sh
 ```
 
-The script builds the frontend in the repository, then launches Python with the current directory intact. Dependencies are installed in the repository, and gallery data is stored in the caller's `.locallery/data`. To skip the build:
+The script builds the frontend in the repository, then launches Python with the current directory intact and asks for the album folder. Dependencies are installed in the repository, and gallery data is stored in the caller's `.locallery/data`, even when a different album folder is selected. To skip the build:
 
 ```sh
 uv run --project /absolute/path/to/locallery --extra cpu python -m locallery
@@ -51,9 +55,10 @@ embedding:
   model: google/embeddinggemma-2
   device: auto
   dtype: auto
+  cache_dir: null
 ```
 
-Optional `<cwd>/.locallery/config.yml` overrides global settings and can set the library:
+Optional `<cwd>/.locallery/config.yaml` (or `config.yml`) overrides global settings and can set the library. An explicit `--library` selection takes precedence:
 
 ```yaml
 library:
@@ -65,6 +70,15 @@ embedding:
 ```
 
 Relative library paths and explicit relative model paths (`./checkpoint`) resolve against the working directory. The local config is optional and is not generated. `embedding.revision` optionally pins a Hugging Face commit/tag; the actual resolved commit is included in the embedding fingerprint. Local checkpoints are identified by file paths, sizes, and modification times. If replacing local weights while preserving all those attributes, clear the derived data to force reindexing.
+
+`embedding.cache_dir` controls where Transformers downloads and caches the model, processor, and configuration. Leave it unset or `null` to use Hugging Face's normal cache (including `HF_HOME`/`HF_HUB_CACHE` overrides). Relative cache paths resolve against the Locallery **source directory**, regardless of the working directory or YAML location: `.` means the repository root, and `./models` means `<locallery-source>/models`. Absolute paths and `~` are supported. For example, add this to global `~/.locallery/config.yml` or the local configuration:
+
+```yaml
+embedding:
+  cache_dir: ./models
+```
+
+Existing downloads are not moved automatically; changing the cache directory may download another copy. The `models/` directory in the repository is Git-ignored. Cache location alone does not invalidate gallery embeddings when the resolved checkpoint is unchanged.
 
 `dtype` accepts `auto`, `float32`, or `bfloat16`. Auto uses bfloat16 on compatible CUDA devices and float32 elsewhere. Float16 is rejected because Google documents invalid/degraded outputs for this model. `device` accepts `auto`, `cpu`, `cuda`, `cuda:N`, or `mps`. Model configuration is necessary now because this process owns inference. There is no embedding concurrency setting: one worker serializes indexing and search inference.
 
@@ -148,8 +162,11 @@ Each video gets **one 768-dimensional embedding**, produced jointly from its sam
 
 Global defaults or local overrides can configure:
 
+Set `video.enabled: false` to skip video processing during startup and manual scans. Videos count as skipped and are not hashed, decoded, or embedded. Previously indexed videos remain available while their files exist; new or changed videos wait until scanning is enabled again. Enabling video scanning again reuses valid caches. Restart after changing configuration; image indexing continues normally.
+
 ```yaml
 video:
+  enabled: true
   fps: 1
   max_frames: 32
   overflow_strategy: uniform
@@ -171,6 +188,18 @@ This provides broad whole-video retrieval, including long clips with bounded sam
 The full backend suite now passes **21 checks**, including generated video indexing, read-only sources, cache reuse/duplicates/removals, missing-frame regeneration, video-only settings invalidation, corrupt-file retry, duration/poster metadata, byte-range responses, and original timestamp metadata passed without repeated sampling. The reference sampler was checked against a one-hour metadata fixture: uniform sampling retained 32 positions from 0 to 3,599 seconds; truncation retained only the opening 32 seconds. This checks selection, not playback/inference on an actual hour-long recording.
 
 Two generated two-second MP4s indexed through the actual Google checkpoint on CPU float32 with timestamps enabled. A red-square query ranked the red video first; refinement combined cached video frames with text and excluded the reference from results. Browser playback reported the expected 160×96 dimensions and two-second duration, played without errors, and successfully sought to 0.5 seconds. Frontend lint/type checks and production build passed. Long real recordings, variable-frame-rate accuracy, uncommon codecs, and GPU video inference remain unverified.
+
+### Startup folder selection verification
+
+The backend suite passes 28 checks, including the prompt's current-directory default, invalid-directory retry, relative folder selection, noninteractive/explicit selection, preservation of local configuration files, skipping the prompt for an existing `.locallery`, and local YAML filename precedence. ESLint/Ruff, Svelte/TypeScript checks, and the production build passed. These checks use injected inference; no additional real-model indexing was performed for this launch change.
+
+### Model cache configuration verification
+
+The backend suite passes 38 checks, including default/custom cache forwarding to all Transformers loaders, source-relative/absolute/home path resolution, local overrides, and invalid path settings. ESLint/Ruff passed. Model downloads were mocked for this change; no additional checkpoint download or real-model inference was performed.
+
+### Video scanning toggle verification
+
+The backend suite passes 41 checks. Toggle coverage verifies image indexing continues while videos are skipped, existing video records remain, deleted videos are reconciled, re-enabling scanning reuses valid caches, and the setting requires a YAML boolean. ESLint/Ruff passed. No additional real-model inference was performed for this scanning change.
 
 ## License and model attribution
 

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -10,7 +11,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
-from .config import read_config
+from .config import choose_library, read_config
 from .indexer import initial_progress
 from .service import Service
 
@@ -243,10 +244,32 @@ def main():
         action="store_true",
         help="Print server bind settings for the Vite launcher",
     )
+    parser.add_argument(
+        "--library", help="Use this album folder without the interactive prompt"
+    )
+    parser.add_argument("--select-library", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if not args.print_config or args.select_library:
+        try:
+            library = choose_library(args.library)
+        except ValueError as error:
+            parser.error(str(error))
+        # Reload workers inherit the choice; it never becomes a config file.
+        if library is None:
+            os.environ.pop("LOCALLERY_LIBRARY", None)
+        else:
+            os.environ["LOCALLERY_LIBRARY"] = str(library)
     config = read_config()
     if args.print_config:
-        print(json.dumps({"host": config.host, "port": config.port}))
+        print(
+            json.dumps(
+                {
+                    "host": config.host,
+                    "port": config.port,
+                    "library": str(config.library),
+                }
+            )
+        )
         return
     uvicorn.run(
         "locallery.server:create_app" if args.reload else create_app(config),

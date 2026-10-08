@@ -35,12 +35,16 @@ class VideoSettings:
     max_frames: int = 32
     overflow_strategy: str = "uniform"
     add_timestamps: bool = True
+    enabled: bool = True
 
 
 def video_fingerprint(image_fingerprint, settings):
+    sampling = asdict(settings)
+    # Scanning policy does not change vectors or invalidate existing caches.
+    sampling.pop("enabled")
     return hashlib.sha256(
         json.dumps(
-            [image_fingerprint, VIDEO_PREPROCESS, asdict(settings)], sort_keys=True
+            [image_fingerprint, VIDEO_PREPROCESS, sampling], sort_keys=True
         ).encode()
     ).hexdigest()
 

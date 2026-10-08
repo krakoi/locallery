@@ -270,3 +270,51 @@ def test_video_processor_receives_original_metadata_without_resampling(video_lib
     assert recorded["video_metadata"][0].timestamps == [0, 1]
     assert recorded["messages"][0]["content"][0] == {"type": "video"}
     assert recorded["text"].startswith("<|video|>")
+
+
+@pytest.mark.parametrize("previously_indexed", [False, True])
+def test_disabled_video_scanning(video_library, monkeypatch, previously_indexed):
+    config, db, source = video_library
+    embedder = VideoEmbedder()
+    progress = []
+    if previously_indexed:
+        scan(config, db, embedder, progress.append)
+    calls_before = len(embedder.calls)
+    Image.new("RGB", (20, 10), "blue").save(config.library / "photo.png")
+    disabled = replace(config, video=replace(config.video, enabled=False))
+    assert video_fingerprint(embedder.fingerprint, disabled.video) == video_fingerprint(
+        embedder.fingerprint, config.video
+    )
+
+    def unexpected_video(*args, **kwargs):
+        pytest.fail("Disabled video scanning must not decode video frames")
+
+    with monkeypatch.context() as patch:
+        patch.setattr("locallery.indexer.prepare_video", unexpected_video)
+        scan(disabled, db, embedder, progress.append)
+    assert progress[-1]["total"] == 1
+    assert progress[-1]["indexed"] == 1
+    assert progress[-1]["failed"] == 0
+    assert progress[-1]["skipped"] >= 1
+    assert len(embedder.calls) == calls_before + 1
+    assert embedder.calls[-1][1] and not embedder.calls[-1][2]
+    assert db.execute("SELECT count(*) FROM images").fetchone()[0] == (
+        2 if previously_indexed else 1
+    )
+    scan(config, db, embedder, progress.append)
+    assert progress[-1]["indexed"] == (0 if previously_indexed else 1)
+    source.unlink()
+    scan(disabled, db, embedder, progress.append)
+    assert db.execute("SELECT count(*) FROM images").fetchone()[0] == 1
+
+
+def test_video_enabled_config_validation(tmp_path):
+    local = tmp_path / ".locallery"
+    local.mkdir()
+    file = local / "config.yaml"
+    file.write_text("video:\n  enabled: false\n")
+    assert read_config(tmp_path, tmp_path / "global").video.enabled is False
+    for value in ["1", "null", '"false"']:
+        file.write_text(f"video:\n  enabled: {value}\n")
+        with pytest.raises(ValueError, match="video.enabled"):
+            read_config(tmp_path, tmp_path / "global")
