@@ -1,21 +1,7 @@
-import { resolve } from 'node:path';
+import { backendCommand } from './python';
 
-const project = resolve(import.meta.dir, '..');
-const extra = process.env.LOCALLERY_TORCH_EXTRA || 'cpu';
 const configProcess = Bun.spawn(
-  [
-    'uv',
-    'run',
-    '--project',
-    project,
-    '--extra',
-    extra,
-    'python',
-    '-m',
-    'locallery',
-    '--print-config',
-    '--select-library',
-  ],
+  backendCommand(['--print-config', '--select-library']),
   { stdin: 'inherit', stdout: 'pipe', stderr: 'inherit' },
 );
 const output = await new Response(configProcess.stdout).text();

@@ -76,7 +76,7 @@ def local_config_file(directory: Path) -> Path:
 
 
 def choose_library(value: str | None = None) -> Path | None:
-    """Select a launch-only library without persisting a local override."""
+    """Remember a prompted album; leave defaults and CLI overrides transient."""
     if value is not None:
         path = Path(value).expanduser().resolve()
         if not path.is_dir():
@@ -102,6 +102,11 @@ def choose_library(value: str | None = None) -> Path | None:
             answer = ""
         path = Path(answer or ".").expanduser().resolve()
         if path.is_dir():
+            if path != Path.cwd().resolve():
+                directory(local_dir)
+                (local_dir / "config.yaml").write_text(
+                    yaml.safe_dump({"library": {"path": str(path)}}, sort_keys=False)
+                )
             return path
         print(f"Folder does not exist or is not a directory: {path}", file=sys.stderr)
 

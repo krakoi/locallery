@@ -1,6 +1,6 @@
 """Explicit real-model check on a small read-only library.
 
-Run: uv run --extra cpu python scripts/smoke-model.py /path/to/photos
+Run: .venv/bin/python scripts/smoke-model.py /path/to/photos
 """
 
 import sys

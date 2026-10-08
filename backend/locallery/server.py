@@ -325,7 +325,7 @@ def main():
             library = choose_library(args.library)
         except ValueError as error:
             parser.error(str(error))
-        # Reload workers inherit the choice; it never becomes a config file.
+        # Reload workers inherit the choice, including transient CLI overrides.
         if library is None:
             os.environ.pop("LOCALLERY_LIBRARY", None)
         else:

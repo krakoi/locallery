@@ -14,8 +14,8 @@
     "test": "bun test tests/history.test.ts && .venv/bin/python -m pytest",
     "lint": "eslint . --max-warnings 0 && .venv/bin/ruff check backend scripts",
     "lint:fix": "eslint . --fix --max-warnings 0 && .venv/bin/ruff check backend scripts --fix",
-    "benchmark": "uv run --extra cpu python -m locallery.benchmark",
-    "benchmark:indexing": "uv run --extra cpu python -m locallery.benchmark_indexing",
+    "benchmark": ".venv/bin/python -m locallery.benchmark",
+    "benchmark:indexing": ".venv/bin/python -m locallery.benchmark_indexing",
     "format": "prettier --write src scripts tests vite.config.ts svelte.config.js eslint.config.js package.json tsconfig.json && .venv/bin/ruff format backend scripts"
   },
   "dependencies": {

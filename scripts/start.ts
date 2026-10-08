@@ -1,19 +1,6 @@
-import { resolve } from 'node:path';
+import { backendCommand } from './python';
 
-const project = resolve(import.meta.dir, '..');
-const extra = process.env.LOCALLERY_TORCH_EXTRA || 'cpu';
-const args = [
-  'uv',
-  'run',
-  '--project',
-  project,
-  '--extra',
-  extra,
-  'python',
-  '-m',
-  'locallery',
-  ...Bun.argv.slice(2),
-];
+const args = backendCommand(Bun.argv.slice(2));
 const child = Bun.spawn(args, {
   stdout: 'inherit',
   stderr: 'inherit',

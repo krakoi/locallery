@@ -409,28 +409,37 @@ def test_startup_library_prompt_default_and_retry(tmp_path, monkeypatch, capsys)
     output = capsys.readouterr().err
     assert str(tmp_path) in output
     assert "Folder does not exist" in output
+    assert not (tmp_path / ".locallery" / "config.yaml").exists()
     assert not (tmp_path / ".locallery" / "config.yml").exists()
 
 
-def test_startup_library_selection_is_not_persisted(tmp_path, monkeypatch):
+def test_startup_library_selection_is_persisted(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     from locallery.config import choose_library
 
-    selected = tmp_path / "photos"
+    selected = tmp_path / "photos with spaces"
     selected.mkdir()
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("LOCALLERY_LIBRARY", raising=False)
     monkeypatch.setattr("sys.stdin", SimpleNamespace(isatty=lambda: True))
-    monkeypatch.setattr("builtins.input", lambda: "photos")
-    monkeypatch.setenv("LOCALLERY_LIBRARY", str(choose_library()))
+    monkeypatch.setattr("builtins.input", lambda: selected.name)
+    assert choose_library() == selected
     config = read_config(tmp_path, tmp_path / "global")
     assert config.library == selected
     assert config.storage == tmp_path / ".locallery" / "data"
+    local = tmp_path / ".locallery" / "config.yaml"
+    saved = local.read_text()
+    assert local.is_file()
     assert not (tmp_path / ".locallery" / "config.yml").exists()
-    local = tmp_path / ".locallery" / "config.yml"
-    local.write_text("library:\n  path: unused\n")
+
+    def unexpected_prompt():
+        pytest.fail("Saved selection must skip the prompt on restart")
+
+    monkeypatch.setattr("builtins.input", unexpected_prompt)
+    assert choose_library() is None
     assert read_config(tmp_path, tmp_path / "global").library == selected
-    assert local.read_text() == "library:\n  path: unused\n"
+    assert local.read_text() == saved
 
 
 def test_startup_library_noninteractive_and_explicit(tmp_path, monkeypatch):
@@ -444,6 +453,7 @@ def test_startup_library_noninteractive_and_explicit(tmp_path, monkeypatch):
     folder = tmp_path / "photos"
     folder.mkdir()
     assert choose_library("photos") == folder
+    assert not (tmp_path / ".locallery").exists()
     with pytest.raises(ValueError, match="existing directory"):
         choose_library("missing")
 
