@@ -10,6 +10,62 @@ import numpy as np
 from .config import PREPROCESS, Config
 
 
+def cache_miss(error):
+    from huggingface_hub.errors import LocalEntryNotFoundError
+
+    cause = error
+    while cause is not None:
+        if isinstance(cause, PermissionError):
+            return False
+        if isinstance(cause, (LocalEntryNotFoundError, FileNotFoundError)):
+            return True
+        cause = cause.__cause__ or cause.__context__
+    # Transformers sometimes discards the underlying cache-miss exception.
+    message = str(error)
+    return isinstance(error, OSError) and (
+        "does not appear to have a file named" in message
+        or message.startswith(
+            (
+                "Can't load tokenizer for",
+                "Can't load image processor for",
+                "Can't load video processor for",
+            )
+        )
+    )
+
+
+def local_first(loader, model, *args, **kwargs):
+    from huggingface_hub import is_offline_mode
+
+    try:
+        return loader(model, *args, local_files_only=True, **kwargs)
+    except OSError as error:
+        if Path(model).is_dir() or is_offline_mode() or not cache_miss(error):
+            raise
+    print(
+        "Required model files are missing locally; fetching from Hugging Face",
+        flush=True,
+    )
+    return loader(model, *args, local_files_only=False, **kwargs)
+
+
+def load_processor(model, **kwargs):
+    from transformers import AutoProcessor
+    from transformers.utils.hub import cached_file
+
+    try:
+        processor = AutoProcessor.from_pretrained(model, **kwargs)
+    except ValueError as error:
+        if str(error).startswith("Unrecognized image processor in"):
+            # Missing nested processor config is reported as an architecture error.
+            # Let the official file resolver distinguish missing and invalid config.
+            cached_file(model, "processor_config.json", **kwargs)
+        raise
+    if not processor.chat_template:
+        raise FileNotFoundError("Checkpoint is missing its processor chat template")
+    return processor
+
+
 def normalize(values, dimensions=768):
     vector = np.asarray(values, dtype=np.float32)
     if vector.shape != (dimensions,) or not np.isfinite(vector).all():
@@ -72,7 +128,7 @@ class Embedder:
         if self.model is not None:
             return
         import torch
-        from transformers import AutoConfig, AutoModel, AutoProcessor
+        from transformers import AutoConfig, AutoModel
         from transformers.utils.hub import cached_file, extract_commit_hash
 
         config = self.config
@@ -88,23 +144,34 @@ class Embedder:
             )
         resolved_dtype = getattr(torch, dtype)
         cache_dir = str(config.cache_dir) if config.cache_dir is not None else None
-        config_file = cached_file(
-            config.model, "config.json", revision=config.revision, cache_dir=cache_dir
+        config_file = local_first(
+            cached_file,
+            config.model,
+            "config.json",
+            revision=config.revision,
+            cache_dir=cache_dir,
         )
         commit = extract_commit_hash(config_file, None)
         revision = commit or config.revision
-        model_config = AutoConfig.from_pretrained(
-            config.model, revision=revision, cache_dir=cache_dir
+        model_config = local_first(
+            AutoConfig.from_pretrained,
+            config.model,
+            revision=revision,
+            cache_dir=cache_dir,
         )
         if getattr(model_config, "model_type", None) != "embedding_gemma2":
             raise ValueError("embedding.model must be an EmbeddingGemma 2 checkpoint")
         # Only vision and text are used; avoid loading the independent audio tower.
         model_config.audio_config = None
-        processor = AutoProcessor.from_pretrained(
-            config.model, revision=revision, cache_dir=cache_dir
+        processor = local_first(
+            load_processor,
+            config.model,
+            revision=revision,
+            cache_dir=cache_dir,
         )
         model = (
-            AutoModel.from_pretrained(
+            local_first(
+                AutoModel.from_pretrained,
                 config.model,
                 revision=revision,
                 cache_dir=cache_dir,

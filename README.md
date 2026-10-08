@@ -83,6 +83,8 @@ embedding:
 
 Existing downloads are not moved automatically; changing the cache directory may download another copy. The `models/` directory in the repository is Git-ignored. Cache location alone does not invalidate gallery embeddings when the resolved checkpoint is unchanged.
 
+Model loading checks local files first for the checkpoint configuration, processor, and weights. A complete cached checkpoint loads without contacting Hugging Face, including when `revision` is omitted or names a mutable branch. Missing required files allow a download using the same resolved checkpoint revision and configured cache directory. Local checkpoint directories and explicit Hugging Face offline mode never fall back to the Hub. Cached checkpoints are not automatically refreshed on startup; select a different `embedding.revision` to fetch another version. Invalid configuration, unreadable files, and device errors are reported rather than retried as downloads.
+
 `dtype` accepts `auto`, `float32`, or `bfloat16`. Auto uses bfloat16 on compatible CUDA devices and float32 elsewhere. Float16 is rejected because Google documents invalid/degraded outputs for this model. `device` accepts `auto`, `cpu`, `cuda`, `cuda:N`, or `mps`. Model configuration is necessary now because this process owns inference. There is no embedding concurrency setting: one worker serializes indexing and search inference.
 
 Existing global files are preserved. Legacy `embedding.base_url`, `timeout_seconds`, and `concurrency` are ignored with a terminal notice; remove these settings when convenient. `storage` remains automatic. `LOCALLERY_HOME` overrides the global configuration directory. Legacy root `config.yaml` and `LOCALLERY_CONFIG` are unused.
@@ -262,6 +264,12 @@ CPU measurements from one run on October 8, 2026:
 Preparation seconds sum concurrent preview work; they overlap inference and are not additive wall time. Hashing added 0.02–0.06 worker seconds per trial. Model loading and warmup are excluded from total seconds; process peak RSS includes them and excludes encoder child processes. An existing gallery process was consuming substantial CPU during this run. This small, single-pass, CPU-contended sample does not establish a general speedup or an optimal setting; the CPU default remains batch size one. Repeat the benchmark on an idle machine and a representative collection before tuning.
 
 CUDA was unavailable on this host, so CUDA throughput/memory, actual device OOM recovery, MPS inference, and bfloat16 batched/single equivalence remain unverified. OOM and cancellation behavior were tested with injected model calls. Videos still run individually after image processing.
+
+### Local model loading verification
+
+The backend suite passes **100 checks**, including cache-only loading across all Transformers loaders, configured cache/revision forwarding, download fallback for missing files/configuration/chat templates, preservation of local-directory/offline behavior, and propagation of invalid-file, permission, device, and Hub errors. ESLint/Ruff, Svelte/TypeScript checks, and the production build passed.
+
+The actual cached checkpoint at commit `914f7f89142e33e77833254d9c9b90c3cef7303b` loaded on CPU float32 with internet socket connections blocked and Hugging Face offline mode disabled. No network connection was attempted; the embedding fingerprint remained unchanged. Download fallback was tested with injected loaders; no additional download or semantic inference was performed for this change.
 
 ## License and model attribution
 

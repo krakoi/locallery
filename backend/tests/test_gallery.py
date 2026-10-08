@@ -352,16 +352,19 @@ def test_model_load_pins_processor_and_weights_to_same_commit(
 
     def load_config(model, **kwargs):
         assert kwargs["cache_dir"] == expected_cache
+        assert kwargs["local_files_only"] is True
         calls.append(("config", kwargs["revision"]))
         return model_config
 
     def load_processor(model, **kwargs):
         assert kwargs["cache_dir"] == expected_cache
+        assert kwargs["local_files_only"] is True
         calls.append(("processor", kwargs["revision"]))
-        return object()
+        return SimpleNamespace(chat_template="template")
 
     def load_model(model, **kwargs):
         assert kwargs["cache_dir"] == expected_cache
+        assert kwargs["local_files_only"] is True
         calls.append(("model", kwargs["revision"]))
         assert kwargs["dtype"] == torch.float32
         assert kwargs["config"].audio_config is None
@@ -369,6 +372,7 @@ def test_model_load_pins_processor_and_weights_to_same_commit(
 
     def cached_config(*args, **kwargs):
         assert kwargs["cache_dir"] == expected_cache
+        assert kwargs["local_files_only"] is True
         return f"/cache/snapshots/{commit}/config.json"
 
     monkeypatch.setattr(hub, "cached_file", cached_config)
