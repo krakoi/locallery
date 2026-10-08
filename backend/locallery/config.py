@@ -18,7 +18,9 @@ DEFAULTS = {
         "device": "auto",
         "dtype": "auto",
         "cache_dir": None,
+        "batch_size": "auto",
     },
+    "indexing": {"preparation_workers": 2},
     "video": {
         "enabled": True,
         "fps": 1,
@@ -41,6 +43,8 @@ class Config:
     dtype: str = "auto"
     video: VideoSettings = field(default_factory=VideoSettings)
     cache_dir: Path | None = None
+    batch_size: int | str = "auto"
+    preparation_workers: int = 2
 
 
 def inside(root: Path, path: Path) -> bool:
@@ -123,7 +127,7 @@ def read_config(cwd: Path | None = None, global_directory: Path | None = None):
     for raw in (global_raw, local_raw):
         if "storage" in raw:
             raise ValueError("storage is automatic; remove storage from config.yml")
-        for section in ("library", "server", "embedding", "video"):
+        for section in ("library", "server", "embedding", "video", "indexing"):
             mapping(raw.get(section), section)
     server = (
         DEFAULTS["server"]
@@ -148,12 +152,34 @@ def read_config(cwd: Path | None = None, global_directory: Path | None = None):
         "device",
         "dtype",
         "cache_dir",
+        "batch_size",
         "base_url",
         "timeout_seconds",
         "concurrency",
     }
     if unknown := set(embedding) - allowed:
         raise ValueError(f"Unknown embedding settings: {', '.join(sorted(unknown))}")
+    batch_size = embedding["batch_size"]
+    if batch_size != "auto" and (
+        isinstance(batch_size, bool)
+        or not isinstance(batch_size, int)
+        or not 1 <= batch_size <= 64
+    ):
+        raise ValueError("embedding.batch_size must be auto or an integer from 1 to 64")
+    indexing = (
+        DEFAULTS["indexing"]
+        | mapping(global_raw.get("indexing"), "indexing")
+        | mapping(local_raw.get("indexing"), "indexing")
+    )
+    if set(indexing) - set(DEFAULTS["indexing"]):
+        raise ValueError("Unknown indexing settings")
+    workers = indexing["preparation_workers"]
+    if (
+        isinstance(workers, bool)
+        or not isinstance(workers, int)
+        or not 1 <= workers <= 16
+    ):
+        raise ValueError("indexing.preparation_workers must be an integer from 1 to 16")
 
     def text(value, name):
         if not isinstance(value, str) or not value.strip():
@@ -227,4 +253,6 @@ def read_config(cwd: Path | None = None, global_directory: Path | None = None):
         dtype,
         VideoSettings(**video),
         cache_dir,
+        batch_size,
+        workers,
     )

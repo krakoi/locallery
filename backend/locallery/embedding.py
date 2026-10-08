@@ -26,6 +26,48 @@ class Embedder:
         self.model = None
         self.fingerprint = ""
 
+    def release_device_cache(self):
+        import torch
+
+        if self.device.startswith("cuda"):
+            torch.cuda.empty_cache()
+        elif self.device == "mps":
+            torch.mps.empty_cache()
+
+    def embed_images(self, paths):
+        """Each conversation is one independent image, preserving input order."""
+        if not paths:
+            return np.empty((0, 768), dtype=np.float32)
+        self.load()
+        conversations = [
+            [{"role": "user", "content": [{"type": "image", "url": str(path)}]}]
+            for path in paths
+        ]
+        inputs = self.processor.apply_chat_template(
+            conversations,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+            processor_kwargs={"padding": True},
+        ).to(self.device)
+        vectors = self._pool(inputs)
+        if vectors.shape != (len(paths), 768):
+            raise ValueError("Image batch returned an unexpected embedding shape")
+        return vectors
+
+    def _pool(self, inputs):
+        import torch
+
+        if inputs["input_ids"].shape[-1] > 8192:
+            raise ValueError("Query exceeds the model's 8,192-token context")
+        with torch.inference_mode():
+            tokens = self.model(**inputs).last_hidden_state.float()
+            mask = inputs["attention_mask"].unsqueeze(-1).float()
+            if torch.any(mask.sum(dim=1) == 0):
+                raise ValueError("Embedding input has an empty attention mask")
+            pooled = (tokens * mask).sum(dim=1) / mask.sum(dim=1)
+        return np.stack([normalize(row) for row in pooled.cpu().numpy()])
+
     def load(self):
         if self.model is not None:
             return
@@ -111,8 +153,6 @@ class Embedder:
         video: str | None = None,
     ):
         self.load()
-        import torch
-
         content = []
         if video:
             content.append({"type": "video"})
@@ -142,10 +182,4 @@ class Embedder:
             inputs = self.processor.apply_chat_template(
                 messages, tokenize=True, return_dict=True, return_tensors="pt"
             ).to(self.device)
-        if inputs["input_ids"].shape[-1] > 8192:
-            raise ValueError("Query exceeds the model's 8,192-token context")
-        with torch.inference_mode():
-            tokens = self.model(**inputs).last_hidden_state.float()
-            mask = inputs["attention_mask"].unsqueeze(-1).float()
-            pooled = (tokens * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-9)
-        return normalize(pooled[0].cpu().numpy())
+        return self._pool(inputs)[0]

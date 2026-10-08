@@ -6,7 +6,8 @@ import time
 from pathlib import PurePosixPath
 
 from .cancellation import ScanCancelled
-from .images import SUPPORTED, make_preview
+from .images import SUPPORTED
+from .pipeline import ImagePipeline, hash_file
 from .videos import SUPPORTED_VIDEOS, cache_exists, prepare_video, video_fingerprint
 
 
@@ -108,7 +109,36 @@ def scan(config, db, embedder, report, check_running=lambda: None):
     )
     emit()
     started = time.monotonic()
+
+    def finish_file():
+        progress["processed"] += 1
+        elapsed = time.monotonic() - started
+        progress["rate"] = progress["processed"] / elapsed if elapsed else 0
+        progress["etaSeconds"] = (
+            (progress["total"] - progress["processed"]) / progress["rate"]
+            if progress["rate"]
+            else None
+        )
+        emit()
+
+    def image_result(kind, path, exception):
+        if kind in ("batch", "preparing"):
+            progress["message"] = path
+            emit()
+            return
+        if kind == "failed":
+            error(path, exception)
+        else:
+            progress[kind] += 1
+        finish_file()
+
+    pipeline = ImagePipeline(config, db, embedder, image_result, check_running)
+    pipeline.run(
+        path for path in files if PurePosixPath(path).suffix.lower() in SUPPORTED
+    )
     for path in files:
+        if PurePosixPath(path).suffix.lower() not in SUPPORTED_VIDEOS:
+            continue
         check_running()
         size, mtime, digest = 0, "", None
         parent = str(PurePosixPath(path).parent)
@@ -136,8 +166,7 @@ def scan(config, db, embedder, report, check_running=lambda: None):
             ):
                 progress["unchanged"] += 1
             else:
-                with source.open("rb") as file:
-                    digest = hashlib.file_digest(file, "sha256").hexdigest()
+                digest = hash_file(source, check_running)
                 check_running()
                 asset_id = digest + "-" + current_fp
                 cached = db.execute(
@@ -169,12 +198,6 @@ def scan(config, db, embedder, report, check_running=lambda: None):
                         emit()
                         check_running()
                         vector = embedder.embed(video=manifest)
-                    else:
-                        cache, width, height = make_preview(
-                            source, asset_id, config.storage
-                        )
-                        check_running()
-                        vector = embedder.embed(image=cache)
                     check_running()
                     db.execute(
                         "INSERT OR REPLACE INTO assets(id,hash,fingerprint,cache,width,height,vector,media_type,duration,video_manifest) VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -220,15 +243,7 @@ def scan(config, db, embedder, report, check_running=lambda: None):
                     str(exception),
                 ),
             )
-        progress["processed"] += 1
-        elapsed = time.monotonic() - started
-        progress["rate"] = progress["processed"] / elapsed if elapsed else 0
-        progress["etaSeconds"] = (
-            (progress["total"] - progress["processed"]) / progress["rate"]
-            if progress["rate"]
-            else None
-        )
-        emit()
+        finish_file()
     check_running()
     if complete:
         db.execute("BEGIN")

@@ -35,6 +35,9 @@ class VideoEmbedder:
     def load(self):
         pass
 
+    def embed_images(self, paths):
+        return np.stack([self.embed(image=path) for path in paths])
+
     def embed(self, query=None, image=None, video=None):
         self.calls.append((query, image, video))
         vector = np.zeros(768, dtype=np.float32)

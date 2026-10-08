@@ -176,7 +176,7 @@ def prepare_video(
         try:
             temporary.write_bytes(result.stdout)
             cache, width, height = make_preview(
-                temporary, f"{asset_id}-{number:03}", storage
+                temporary, f"{asset_id}-{number:03}", storage, check_running
             )
             target = directory / f"{number:03}.jpg"
             Path(cache).replace(target)

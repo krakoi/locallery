@@ -25,6 +25,9 @@ class FakeEmbedder:
     def load(self):
         pass
 
+    def embed_images(self, paths):
+        return np.stack([self.embed(image=path) for path in paths])
+
     def embed(self, query=None, image=None):
         self.calls.append((query, image))
         if self.fail:

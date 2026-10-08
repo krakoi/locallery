@@ -56,6 +56,9 @@ embedding:
   device: auto
   dtype: auto
   cache_dir: null
+  batch_size: auto
+indexing:
+  preparation_workers: 2
 ```
 
 Optional `<cwd>/.locallery/config.yaml` (or `config.yml`) overrides global settings and can set the library. An explicit `--library` selection takes precedence:
@@ -109,6 +112,21 @@ Pillow applies orientation, resizes without upscaling to a maximum 1,280-pixel e
 
 The model loads once and stays in memory. The independent audio tower is disabled. The official `AutoProcessor.apply_chat_template` prepares images and composed queries. `AutoModel` emits projected token embeddings; mask-aware mean pooling in float32 and L2 normalization produce a validated vector. Query text uses `task: search result | query: ...`. Implementation, resolved checkpoint, dtype/device, Transformers version, and preprocessing changes invalidate cached embeddings.
 
+### Parallel image indexing
+
+Image hashing and JPEG preparation run in a bounded worker pool while the service worker performs inference and SQLite writes. Identical content shares one preparation job and embedding. Unchanged files skip preparation entirely. Images are processed first; enabled videos follow individually.
+
+```yaml
+indexing:
+  preparation_workers: 2   # Integer 1–16
+embedding:
+  batch_size: auto         # auto or an integer 1–64
+```
+
+`auto` resolves to four images on CUDA and one on CPU/MPS. A model batch contains separate image samples, producing one vector per image. At most `2 × max(preparation_workers, initial_batch_size)` unresolved image files are admitted at once, including hashing, preview generation, duplicates waiting on shared work, and prepared images waiting for inference. Workers return file metadata and JPEG paths; model calls, database access, and progress publication remain on the service worker. Preview encoding uses isolated temporary files and replaces the final JPEG only after success.
+
+Batch failures split recursively to isolate bad items. A recognized device out-of-memory failure reduces the effective batch limit for the remainder of the scan and retries smaller batches; a failing singleton is reported while other files continue. Preparation and inference respect the same shutdown cancellation signal. Completed results persist per file. These performance settings do not invalidate existing embeddings. Higher batch sizes or worker counts are not guaranteed to improve CPU throughput; use the benchmark to measure your hardware.
+
 USearch rebuilds from SQLite after each scan. Scopes with up to 10,000 files use exact NumPy scoring. Larger scopes build/cache their own native f16 cosine index, then rerank candidates using float32 vectors; folder searches never filter a limited global result list. Discovery trains deterministic spherical centroids from at most 10,000 normalized 256-dimensional prefixes, then assigns the full collection with native nearest-centroid search.
 
 During scans, API gallery/search requests return 503 while status, SSE, rescan conflict responses, and static frontend assets remain available. SSE sends a fresh snapshot on connection and keepalives. Terminal output includes stages, counts, throughput, ETA, and errors. Model-loading failures appear on the progress screen; fix the configuration/dependency issue, restart if configuration changed, or rescan to retry a download. Inference and database work run on a dedicated thread.
@@ -124,11 +142,20 @@ bun run test           # Browser-history unit test and Python backend tests
 bun run build
 bun run format         # Prettier for frontend/tooling, Ruff for Python
 bun run benchmark 500000
+bun run benchmark:indexing /path/to/photos --limit 64 --verify
 ```
 
 Backend tests inject a deterministic embedder; they need cjpegli but do not download model weights. They cover incremental/restarted scans, duplicates, changes/removals, source preservation, preview orientation/size, invalid vectors, failures/retries, directory/config handling, descendant scope, refinement, groups, pagination, HTTP blocking, and Transformers request/pooling behavior. The native approximate-ranking check compares against exact scoring in a 10,020-vector fixture.
 
 The benchmark reports construction time, native search latency, RSS, and mean recall@10 against exact scoring for ten deterministic queries; results go to `.benchmark-results/python-latest.json`. Synthetic measurements do not establish photo relevance or performance on 500,000 real files.
+
+The separate indexing benchmark compares preparation workers 1/2/4 and image batch sizes 1/2/4/8 on the same deterministic read-only sample. Each trial runs in a fresh process with a separate application cache under `.benchmark-results/indexing`; model loading and warmup are excluded from elapsed indexing time. It records throughput, aggregate hash/preparation worker seconds (overlapping work, not additive wall time), inference seconds including processor work/retries, peak RSS, and CUDA peak allocated memory when available. Results are saved incrementally to `.benchmark-results/indexing-latest.json`. Run it from outside the source library. `--verify` also compares real batched and individual vectors using a minimum cosine threshold of 0.9999 for float32 or 0.999 for bfloat16.
+
+For a CUDA benchmark with the corresponding installed wheels:
+
+```sh
+uv run --extra cuda python -m locallery.benchmark_indexing /path/to/photos --device cuda --dtype bfloat16 --verify
+```
 
 For real-model verification, point a local config at a small photo library. Check text retrieval, composed refinement, Discover, and that a second scan reports zero new embeddings. The prior Bun/llama.cpp implementation was exercised on nine real photos and a 201-image browser fixture; those results do not validate this Python inference path.
 
@@ -206,6 +233,35 @@ The backend suite passes 41 checks. Toggle coverage verifies image indexing cont
 ### Shutdown verification
 
 The backend suite passes 49 checks. Real subprocess/SIGINT regression tests cover open SSE connections while idle or scanning, retention of committed index records, development reload shutdown, blocked model loading/inference with bounded exit, repeated Ctrl+C forcing immediate exit, and reaping cancelled decoder processes. The original idle traceback, continued-scanning failure, and repeated-signal lifespan traceback reproduced before their fixes. ESLint/Ruff, Svelte/TypeScript checks, and the production build passed. Model calls in these tests are injected; GPU shutdown and actual checkpoint download/inference cancellation have not been exercised.
+
+### Parallel preparation and batching verification
+
+The backend suite passes **82 checks**, including full/partial batches, vector-to-file mapping, processor padding and float32 mask pooling, duplicate reuse across scheduling windows, bounded pending work, overlapping preparation/inference, isolated preparation/batch/vector failures, simulated CUDA/MPS out-of-memory reduction, interrupted-scan reconciliation, and shutdown with queued preparations, active encoding, or blocked batch inference. The browser-history test, ESLint/Ruff, Svelte/TypeScript checks, and production build passed. Existing folder scope, source preservation, incremental scanning, and disabled-video checks remain covered.
+
+The cached Google checkpoint at commit `914f7f89142e33e77833254d9c9b90c3cef7303b` was exercised on nine real photos with CPU float32. Batched inference at sizes 1/2/4/8 matched individual inference with a minimum cosine similarity of **0.99999994**, exceeding the 0.9999 requirement. Every benchmark trial indexed all nine files without errors.
+
+Batch padding is supplied through `apply_chat_template`'s `processor_kwargs` dictionary. A subsequent check with the cached official processor reproduced the warning from top-level `padding`, then confirmed the corrected call produced padded two-image inputs without that warning. This argument-routing correction preserves preprocessing behavior; no additional model inference was performed for it.
+
+CPU measurements from one run on October 8, 2026:
+
+| Preparation workers | Batch size | Preparation worker seconds | Inference seconds | Total seconds | Files/s | Peak Python RSS (MiB) |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1 | 9.02 | 29.15 | 33.89 | 0.27 | 3,170 |
+| 1 | 2 | 8.72 | 27.51 | 31.68 | 0.28 | 3,172 |
+| 1 | 4 | 9.37 | 26.58 | 30.26 | 0.30 | 3,173 |
+| 1 | 8 | 7.62 | 29.19 | 35.89 | 0.25 | 3,521 |
+| 2 | 1 | 10.32 | 26.44 | 27.30 | 0.33 | 3,173 |
+| 2 | 2 | 8.88 | 26.13 | 28.89 | 0.31 | 3,172 |
+| 2 | 4 | 9.23 | 27.52 | 29.65 | 0.30 | 3,195 |
+| 2 | 8 | 8.28 | 26.80 | 30.49 | 0.30 | 3,600 |
+| 4 | 1 | 8.72 | 19.92 | 20.44 | 0.44 | 3,171 |
+| 4 | 2 | 8.48 | 22.79 | 23.34 | 0.39 | 3,173 |
+| 4 | 4 | 7.51 | 20.75 | 21.99 | 0.41 | 3,437 |
+| 4 | 8 | 5.94 | 20.67 | 22.14 | 0.41 | 3,673 |
+
+Preparation seconds sum concurrent preview work; they overlap inference and are not additive wall time. Hashing added 0.02–0.06 worker seconds per trial. Model loading and warmup are excluded from total seconds; process peak RSS includes them and excludes encoder child processes. An existing gallery process was consuming substantial CPU during this run. This small, single-pass, CPU-contended sample does not establish a general speedup or an optimal setting; the CPU default remains batch size one. Repeat the benchmark on an idle machine and a representative collection before tuning.
+
+CUDA was unavailable on this host, so CUDA throughput/memory, actual device OOM recovery, MPS inference, and bfloat16 batched/single equivalence remain unverified. OOM and cancellation behavior were tested with injected model calls. Videos still run individually after image processing.
 
 ## License and model attribution
 

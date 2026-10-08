@@ -27,14 +27,24 @@ class Embedder:
     def __init__(self, config): pass
     def load(self):
         if mode == 'load': time.sleep(60)
+    def embed_images(self, paths):
+        return np.stack([self.embed(image=path) for path in paths])
     def embed(self, **kwargs):
         print('EMBED', flush=True)
-        time.sleep(60 if mode == 'inference' else 0.15)
+        time.sleep(60 if mode in ('inference', 'batch-inference') else 0.15)
         vector = np.zeros(768, dtype=np.float32)
         vector[0] = 1
         return vector
 
-app = server.create_app(Config(Path(sys.argv[1]), Path(sys.argv[2])), Embedder)
+if mode == 'prepare':
+    import locallery.images as images
+    original_run = images.run_command
+    def slow_encoder(args, timeout, check_running):
+        child = "import os,sys,time; from pathlib import Path; Path(sys.argv[1], 'encoder-' + str(os.getpid()) + '.pid').write_text(str(os.getpid())); time.sleep(60)"
+        return original_run([sys.executable, '-c', child, sys.argv[2]], timeout, check_running)
+    images.run_command = slow_encoder
+
+app = server.create_app(Config(Path(sys.argv[1]), Path(sys.argv[2]), batch_size=3 if mode in ('batch-inference', 'prepare') else 'auto'), Embedder)
 runner = getattr(server, 'GalleryServer', uvicorn.Server)
 try:
     runner(uvicorn.Config(app, host='127.0.0.1', port=int(sys.argv[3]),
@@ -46,7 +56,17 @@ except KeyboardInterrupt:
 
 @pytest.mark.parametrize(
     "mode",
-    ["idle", "scan", "load", "inference", "reload", "double-load", "double-inference"],
+    [
+        "idle",
+        "scan",
+        "load",
+        "inference",
+        "reload",
+        "double-load",
+        "double-inference",
+        "batch-inference",
+        "prepare",
+    ],
 )
 def test_ctrl_c_closes_sse_and_stops_scan(tmp_path, mode):
     scenario = mode.removeprefix("double-")
@@ -54,7 +74,7 @@ def test_ctrl_c_closes_sse_and_stops_scan(tmp_path, mode):
 
     source = tmp_path / "source"
     source.mkdir()
-    if scenario in ("scan", "inference"):
+    if scenario in ("scan", "inference", "batch-inference", "prepare"):
         for number in range(60):
             Image.new("RGB", (8, 8), (number, 0, 0)).save(source / f"{number}.png")
     with socket.socket() as listener:
@@ -103,7 +123,7 @@ if __name__ == '__main__':
                 if time.monotonic() >= deadline:
                     pytest.fail("Server did not start")
                 time.sleep(0.05)
-        if scenario in ("scan", "inference"):
+        if scenario in ("scan", "inference", "batch-inference", "prepare"):
             time.sleep(0.4)
         started = time.monotonic()
         process.send_signal(signal.SIGINT)
@@ -120,9 +140,9 @@ if __name__ == '__main__':
         assert "timeout graceful shutdown exceeded" not in output, output
         assert "Exception in ASGI application" not in output, output
         assert "Traceback" not in output, output
-        if scenario in ("scan", "inference"):
+        if scenario in ("scan", "inference", "batch-inference", "prepare"):
             assert output.count("EMBED\n") < 10, output
-        if scenario in ("load", "inference"):
+        if scenario in ("load", "inference", "batch-inference"):
             assert process.returncode == 130, output
             if mode.startswith("double-"):
                 assert time.monotonic() - started < 1
@@ -130,6 +150,12 @@ if __name__ == '__main__':
                 assert "Active operation did not stop" in output
         else:
             assert process.returncode in (0, -signal.SIGINT), output
+        if scenario == "prepare":
+            pidfiles = list((tmp_path / "data").glob("encoder-*.pid"))
+            assert pidfiles, "Encoder cancellation was not exercised"
+            for pidfile in pidfiles:
+                with pytest.raises(ProcessLookupError):
+                    os.kill(int(pidfile.read_text()), 0)
         if scenario == "scan":
             import sqlite3
 
