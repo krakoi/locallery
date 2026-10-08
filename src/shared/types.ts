@@ -51,6 +51,7 @@ export interface Progress {
     | 'ranking'
     | 'grouping'
     | 'ready'
+    | 'stopped'
     | 'error';
   discovered: number;
   processed: number;

@@ -3,7 +3,6 @@
 import hashlib
 import json
 import math
-import subprocess
 from dataclasses import asdict, dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -11,6 +10,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from .cancellation import run_command
 from .images import make_preview
 
 SUPPORTED_VIDEOS = {
@@ -49,8 +49,8 @@ def video_fingerprint(image_fingerprint, settings):
     ).hexdigest()
 
 
-def probe_video(source):
-    result = subprocess.run(
+def probe_video(source, check_running=lambda: None):
+    result = run_command(
         [
             "ffprobe",
             "-v",
@@ -63,8 +63,8 @@ def probe_video(source):
             "json",
             str(source),
         ],
-        capture_output=True,
         timeout=60,
+        check_running=check_running,
     )
     if result.returncode:
         raise ValueError(
@@ -120,13 +120,14 @@ def prepare_video(
     storage: Path,
     settings: VideoSettings,
     report=lambda message: None,
+    check_running=lambda: None,
 ):
     from transformers.models.embedding_gemma2.video_processing_embedding_gemma2 import (
         EmbeddingGemma2VideoProcessor,
     )
     from transformers.video_utils import VideoMetadata
 
-    metadata = probe_video(source)
+    metadata = probe_video(source, check_running)
     # Use the reference processor's index selection rather than reproducing its policy.
     indices = EmbeddingGemma2VideoProcessor().sample_frames(
         VideoMetadata(**metadata),
@@ -138,10 +139,11 @@ def prepare_video(
     directory.mkdir(parents=True, exist_ok=True)
     frames = []
     for number, index in enumerate(indices):
+        check_running()
         report(f"Sampling video frame {number + 1}/{len(indices)} · {source.name}")
         timestamp = float(index) / metadata["fps"]
         # Input-side seek decodes a short GOP near each target instead of the whole clip.
-        result = subprocess.run(
+        result = run_command(
             [
                 "ffmpeg",
                 "-v",
@@ -163,8 +165,8 @@ def prepare_video(
                 "png",
                 "pipe:1",
             ],
-            capture_output=True,
             timeout=120,
+            check_running=check_running,
         )
         if result.returncode or not result.stdout:
             raise ValueError(

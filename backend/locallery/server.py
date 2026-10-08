@@ -3,19 +3,47 @@
 import asyncio
 import json
 import os
+import signal
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
+from threading import Timer
 
+import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
+from .cancellation import ScanCancelled
 from .config import choose_library, read_config
 from .indexer import initial_progress
 from .service import Service
 
 DIST = Path(__file__).resolve().parents[2] / "dist"
+SHUTDOWN_TIMEOUT = 5
+
+
+class GalleryServer(uvicorn.Server):
+    """Notify the app before Uvicorn waits for long-lived HTTP streams."""
+
+    def handle_exit(self, sig, frame):
+        if self.should_exit and sig == signal.SIGINT:
+            # Replaying repeated SIGINT through asyncio cancels lifespan cleanup
+            # and leaves Python joining a blocked inference thread at exit.
+            os._exit(130)
+        # Uvicorn still installs/restores the signal handlers. Locallery consumes
+        # the signal here rather than recording it for replay after cleanup.
+        self.should_exit = True
+
+    async def shutdown(self, sockets=None):
+        app = self.config.loaded_app
+        while app is not None:
+            callback = getattr(getattr(app, "state", None), "begin_shutdown", None)
+            if callback is not None:
+                callback()
+                break
+            app = getattr(app, "app", None)
+        await super().shutdown(sockets)
 
 
 def create_app(config=None, embedder_factory=None):
@@ -64,6 +92,30 @@ def create_app(config=None, embedder_factory=None):
 
     kwargs = {"embedder_factory": embedder_factory} if embedder_factory else {}
     service = Service(config, report, **kwargs)
+    shutdown_timer = None
+
+    def begin_shutdown():
+        nonlocal shutdown_timer
+        if service.stopping.is_set():
+            return
+        service.stop()
+        for queue in subscribers:
+            if queue.full():
+                queue.get_nowait()
+            queue.put_nowait(None)
+
+        def force_shutdown():
+            # Python cannot safely interrupt native inference on another thread.
+            # Completed SQLite writes are already committed; restart rescans.
+            print(
+                f"Active operation did not stop within {SHUTDOWN_TIMEOUT:g} seconds; exiting.",
+                flush=True,
+            )
+            os._exit(130)
+
+        shutdown_timer = Timer(SHUTDOWN_TIMEOUT, force_shutdown)
+        shutdown_timer.daemon = True
+        shutdown_timer.start()
 
     async def call(function, *args):
         return await asyncio.get_running_loop().run_in_executor(
@@ -79,17 +131,29 @@ def create_app(config=None, embedder_factory=None):
             f"Locallery → http://{config.host}:{config.port} · Transformers → {config.model}",
             flush=True,
         )
-        yield
-        if scan_task:
-            await scan_task
-        await call(service.close)
-        executor.shutdown(wait=True)
+        try:
+            yield
+        finally:
+            begin_shutdown()
+            cleanup_complete = False
+            try:
+                if scan_task:
+                    await scan_task
+                await call(service.close)
+                executor.shutdown(wait=True)
+                cleanup_complete = True
+            finally:
+                if shutdown_timer and cleanup_complete:
+                    shutdown_timer.cancel()
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.gallery = state
+    app.state.begin_shutdown = begin_shutdown
 
     @app.middleware("http")
     async def indexing_gate(request, next_handler):
+        if service.stopping.is_set():
+            return JSONResponse({"error": "Server is shutting down"}, status_code=503)
         if (
             request.url.path.startswith("/api/")
             and request.url.path not in ("/api/status", "/api/events", "/api/rescan")
@@ -104,6 +168,10 @@ def create_app(config=None, embedder_factory=None):
             {"error": str(exception)},
             status_code=404 if "not found" in str(exception).lower() else 400,
         )
+
+    @app.exception_handler(ScanCancelled)
+    async def stopped(request, exception):
+        return JSONResponse({"error": "Server is shutting down"}, status_code=503)
 
     @app.exception_handler(Exception)
     async def failed(request, exception):
@@ -121,9 +189,14 @@ def create_app(config=None, embedder_factory=None):
             subscribers.add(queue)
             try:
                 yield f"data: {json.dumps(state['progress'])}\n\n"
-                while not await request.is_disconnected():
+                while (
+                    not service.stopping.is_set()
+                    and not await request.is_disconnected()
+                ):
                     try:
                         progress = await asyncio.wait_for(queue.get(), timeout=15)
+                        if progress is None:
+                            break
                         yield f"data: {json.dumps(progress)}\n\n"
                     except TimeoutError:
                         yield ": keepalive\n\n"
@@ -233,8 +306,6 @@ def create_app(config=None, embedder_factory=None):
 def main():
     import argparse
 
-    import uvicorn
-
     parser = argparse.ArgumentParser(description="Locallery local gallery")
     parser.add_argument(
         "--reload", action="store_true", help="Reload Python source during development"
@@ -271,7 +342,7 @@ def main():
             )
         )
         return
-    uvicorn.run(
+    server_config = uvicorn.Config(
         "locallery.server:create_app" if args.reload else create_app(config),
         factory=args.reload,
         reload=args.reload,
@@ -281,6 +352,19 @@ def main():
         timeout_keep_alive=255,
         timeout_graceful_shutdown=5,
     )
+    server = GalleryServer(server_config)
+    try:
+        if server_config.should_reload:
+            from uvicorn.supervisors import ChangeReload
+
+            socket = server_config.bind_socket()
+            ChangeReload(server_config, target=server.run, sockets=[socket]).run()
+        else:
+            server.run()
+    except KeyboardInterrupt:
+        pass
+    if not server.started and not server_config.should_reload:
+        raise SystemExit(3)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ import os
 import time
 from pathlib import PurePosixPath
 
+from .cancellation import ScanCancelled
 from .images import SUPPORTED, make_preview
 from .videos import SUPPORTED_VIDEOS, cache_exists, prepare_video, video_fingerprint
 
@@ -32,7 +33,7 @@ def initial_progress():
     )
 
 
-def scan(config, db, embedder, report):
+def scan(config, db, embedder, report, check_running=lambda: None):
     progress = initial_progress()
     progress.update(
         stage="discovering",
@@ -58,6 +59,7 @@ def scan(config, db, embedder, report):
             progress["errors"].append({"path": str(path), "message": str(exception)})
 
     def walk(relative="", parent=None):
+        check_running()
         nonlocal complete
         folder_id = opaque("folder:" + relative) if relative else "root"
         seen_folders.add(folder_id)
@@ -73,6 +75,7 @@ def scan(config, db, embedder, report):
         try:
             with os.scandir(config.library / relative) as entries:
                 for entry in entries:
+                    check_running()
                     path = f"{relative}/{entry.name}" if relative else entry.name
                     if entry.name == ".locallery" or entry.is_symlink():
                         progress["skipped"] += 1
@@ -106,6 +109,7 @@ def scan(config, db, embedder, report):
     emit()
     started = time.monotonic()
     for path in files:
+        check_running()
         size, mtime, digest = 0, "", None
         parent = str(PurePosixPath(path).parent)
         folder_id = "root" if parent == "." else opaque("folder:" + parent)
@@ -134,6 +138,7 @@ def scan(config, db, embedder, report):
             else:
                 with source.open("rb") as file:
                     digest = hashlib.file_digest(file, "sha256").hexdigest()
+                check_running()
                 asset_id = digest + "-" + current_fp
                 cached = db.execute(
                     "SELECT cache,video_manifest FROM assets WHERE id=?", (asset_id,)
@@ -153,16 +158,24 @@ def scan(config, db, embedder, report):
                             emit()
 
                         cache, width, height, duration, manifest = prepare_video(
-                            source, asset_id, config.storage, config.video, report_frame
+                            source,
+                            asset_id,
+                            config.storage,
+                            config.video,
+                            report_frame,
+                            check_running,
                         )
                         progress["message"] = f"Embedding sampled video · {source.name}"
                         emit()
+                        check_running()
                         vector = embedder.embed(video=manifest)
                     else:
                         cache, width, height = make_preview(
                             source, asset_id, config.storage
                         )
+                        check_running()
                         vector = embedder.embed(image=cache)
+                    check_running()
                     db.execute(
                         "INSERT OR REPLACE INTO assets(id,hash,fingerprint,cache,width,height,vector,media_type,duration,video_manifest) VALUES (?,?,?,?,?,?,?,?,?,?)",
                         (
@@ -191,6 +204,8 @@ def scan(config, db, embedder, report):
                         asset_id,
                     ),
                 )
+        except ScanCancelled:
+            raise
         except Exception as exception:
             error(path, exception)
             db.execute(
@@ -214,6 +229,7 @@ def scan(config, db, embedder, report):
             else None
         )
         emit()
+    check_running()
     if complete:
         db.execute("BEGIN")
         try:

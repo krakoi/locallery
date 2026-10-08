@@ -111,7 +111,9 @@ The model loads once and stays in memory. The independent audio tower is disable
 
 USearch rebuilds from SQLite after each scan. Scopes with up to 10,000 files use exact NumPy scoring. Larger scopes build/cache their own native f16 cosine index, then rerank candidates using float32 vectors; folder searches never filter a limited global result list. Discovery trains deterministic spherical centroids from at most 10,000 normalized 256-dimensional prefixes, then assigns the full collection with native nearest-centroid search.
 
-During scans, API gallery/search requests return 503 while status, SSE, rescan conflict responses, and static frontend assets remain available. SSE sends a fresh snapshot on connection and keepalives. Terminal output includes stages, counts, throughput, ETA, and errors. Model-loading failures appear on the progress screen; fix the configuration/dependency issue, restart if configuration changed, or rescan to retry a download. Inference and database work run on a dedicated thread; shutdown drains HTTP/SSE connections for up to five seconds, then waits for the active worker job to finish.
+During scans, API gallery/search requests return 503 while status, SSE, rescan conflict responses, and static frontend assets remain available. SSE sends a fresh snapshot on connection and keepalives. Terminal output includes stages, counts, throughput, ETA, and errors. Model-loading failures appear on the progress screen; fix the configuration/dependency issue, restart if configuration changed, or rescan to retry a download. Inference and database work run on a dedicated thread.
+
+Ctrl+C closes progress streams before draining HTTP connections and requests cancellation of indexing. Scanning stops between files and processing stages; video decoder subprocesses are killed and reaped when cancelled. Completed index records remain committed, and the next startup performs an ordinary incremental scan. Native model loading/inference cannot always be interrupted safely on a Python thread: shutdown allows at most five seconds for the active operation, then exits with a short message and status 130 if it remains blocked. Pressing Ctrl+C again forces an immediate exit with status 130, without replaying signals through asyncio or waiting for the worker thread. Forced exits skip normal cleanup; an unfinished file is retried on the next scan. Development reloads use the same shutdown path.
 
 ## Development checks
 
@@ -200,6 +202,10 @@ The backend suite passes 38 checks, including default/custom cache forwarding to
 ### Video scanning toggle verification
 
 The backend suite passes 41 checks. Toggle coverage verifies image indexing continues while videos are skipped, existing video records remain, deleted videos are reconciled, re-enabling scanning reuses valid caches, and the setting requires a YAML boolean. ESLint/Ruff passed. No additional real-model inference was performed for this scanning change.
+
+### Shutdown verification
+
+The backend suite passes 49 checks. Real subprocess/SIGINT regression tests cover open SSE connections while idle or scanning, retention of committed index records, development reload shutdown, blocked model loading/inference with bounded exit, repeated Ctrl+C forcing immediate exit, and reaping cancelled decoder processes. The original idle traceback, continued-scanning failure, and repeated-signal lifespan traceback reproduced before their fixes. ESLint/Ruff, Svelte/TypeScript checks, and the production build passed. Model calls in these tests are injected; GPU shutdown and actual checkpoint download/inference cancellation have not been exercised.
 
 ## License and model attribution
 

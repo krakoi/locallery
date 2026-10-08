@@ -1,5 +1,8 @@
 """All SQLite, ranking, and inference work belongs to one worker thread."""
 
+from threading import Event
+
+from .cancellation import ScanCancelled
 from .db import IMAGE_SELECT, folders, open_database, to_image, vector_from
 from .embedding import Embedder
 from .groups import generate_groups
@@ -14,25 +17,35 @@ class Service:
         self.db = None
         self.vectors = None
         self.progress = initial_progress()
+        self.stopping = Event()
+
+    def stop(self):
+        self.stopping.set()
+
+    def check_running(self):
+        if self.stopping.is_set():
+            raise ScanCancelled("Shutdown requested")
 
     def publish(self, **updates):
+        self.check_running()
         self.progress = self.progress | updates
         self.report(self.progress | {"errors": list(self.progress["errors"])})
 
     def rescan(self):
         self.progress = initial_progress()
-        self.publish(message="Loading EmbeddingGemma 2")
         try:
+            self.publish(message="Loading EmbeddingGemma 2")
             if self.db is None:
                 self.db = open_database(self.config)
                 self.vectors = Vectors(self.db)
             self.embedder.load()
+            self.check_running()
 
             def update(progress):
                 self.progress = progress
                 self.publish()
 
-            scan(self.config, self.db, self.embedder, update)
+            scan(self.config, self.db, self.embedder, update, self.check_running)
             self.publish(stage="ranking", message="Building vector index")
             self.vectors.rebuild(
                 lambda count: self.publish(
@@ -45,6 +58,7 @@ class Service:
                 lambda done, total: self.publish(
                     message=f"Grouping images · {done:,} / {total:,}"
                 ),
+                self.check_running,
             )
             self.publish(
                 busy=False,
@@ -54,7 +68,14 @@ class Service:
                 if self.progress["failed"]
                 else "Library ready",
             )
+        except ScanCancelled:
+            self.progress = self.progress | dict(
+                busy=False, stage="stopped", message="Indexing stopped", etaSeconds=None
+            )
+            self.report(self.progress)
         except Exception as exception:
+            if self.stopping.is_set():
+                return
             self.publish(busy=False, stage="error", message=str(exception))
 
     def close(self):
@@ -62,6 +83,7 @@ class Service:
             self.db.close()
 
     def require_ready(self):
+        self.check_running()
         if self.progress["stage"] != "ready":
             raise ValueError("Library is not ready; resolve the scan error and rescan")
 
@@ -168,6 +190,7 @@ class Service:
             vector = vector_from(reference["vector"])
         else:
             raise ValueError("Enter a search or select a reference image")
+        self.check_running()
         matches = self.vectors.search(
             vector, request.get("folderId"), reference["key"] if reference else None
         )

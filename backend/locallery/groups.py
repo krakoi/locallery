@@ -10,7 +10,8 @@ from .embedding import normalize
 from .vectors import new_index
 
 
-def generate_groups(db, report):
+def generate_groups(db, report, check_running=lambda: None):
+    check_running()
     count = db.execute("SELECT count(*) FROM images WHERE status='ready'").fetchone()[0]
     db.executescript("DELETE FROM groups; UPDATE images SET group_id=NULL;")
     if not count:
@@ -26,6 +27,7 @@ def generate_groups(db, report):
     updates = np.zeros(k, dtype=np.int64)
     for vectors in (sample, sample[::-1]):
         for vector in vectors:
+            check_running()
             group = int(np.argmax(centers @ vector))
             updates[group] += 1
             rate = 1 / math.sqrt(updates[group] + 1)
@@ -36,6 +38,7 @@ def generate_groups(db, report):
     representatives = [[] for _ in range(k)]
     done = 0
     for rows in vector_batches(db):
+        check_running()
         values = np.stack(
             [normalize(vector_from(row["vector"])[:256], 256) for row in rows]
         )
