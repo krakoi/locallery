@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import VideoPlayer from './VideoPlayer.svelte';
   import type {
     Folder,
     Group,
@@ -24,6 +25,19 @@
   let progress = $state.raw<Progress | null>(null);
   let reference = $state.raw<ImageItem | null>(null);
   let viewer = $state.raw<ImageItem | null>(null);
+
+  function durationLabel(seconds: number | null) {
+    if (seconds === null) {
+      return 'Video';
+    }
+    const value = Math.floor(seconds);
+    const hours = Math.floor(value / 3600);
+    const minutes = Math.floor((value % 3600) / 60);
+    const secs = String(value % 60).padStart(2, '0');
+    return hours
+      ? `${hours}:${String(minutes).padStart(2, '0')}:${secs}`
+      : `${minutes}:${secs}`;
+  }
 
   let query = $state(''),
     error = $state(''),
@@ -306,6 +320,9 @@
     if (event.key === 'Escape') {
       viewer = null;
     }
+    if (event.target instanceof HTMLVideoElement) {
+      return;
+    }
     if (event.key === 'ArrowRight') {
       moveViewer(1);
     }
@@ -383,7 +400,7 @@
     <div class="nav-label">YOUR COLLECTION</div>
     <nav aria-label="Main navigation">
       <button class={{ active: mode === 'all' }} onclick={() => navigate('all')}
-        ><span class="nav-icon">▦</span> All images
+        ><span class="nav-icon">▦</span> All media
         <span class="nav-count">{indexedCount.toLocaleString()}</span></button
       >
       <button
@@ -425,7 +442,7 @@
     {/if}
     <div class="sidebar-bottom">
       <div class="local-indicator"><span></span> Local &amp; private</div>
-      <p>Your images stay on your machine.<br />Powered by EmbeddingGemma 2.</p>
+      <p>Your media stay on your machine.<br />Powered by EmbeddingGemma 2.</p>
       <button class="rescan" disabled={progress?.busy} onclick={rescan}
         >↻ Rescan library</button
       >
@@ -441,7 +458,7 @@
             ? 'History'
             : mode === 'folders'
               ? 'Folders'
-              : 'All images'}
+              : 'All media'}
       </div>
       <div class="index-status">
         <span class={{ working: progress?.busy }}></span>{progress?.busy
@@ -460,7 +477,7 @@
             ? 'Finding the patterns.'
             : 'A fresh look at your library.'}
         </h1>
-        <p>Preparing your images for a different kind of search.</p>
+        <p>Preparing your media for a different kind of search.</p>
         <div class="index-panel">
           <div class="panel-heading">
             <strong>{progress?.message || 'Connecting to the backend…'}</strong
@@ -488,7 +505,7 @@
             ><span
               >{progress?.etaSeconds
                 ? `About ${Math.ceil(progress.etaSeconds / 60)} min left`
-                : 'Taking it one image at a time'}</span
+                : 'Taking it one file at a time'}</span
             >
           </div>
           <div class="stat-grid">
@@ -532,10 +549,10 @@
               {searchView
                 ? `${resultCount.toLocaleString()} matches${mode === 'folders' ? ` in ${currentFolder?.name || 'Library'} and its subfolders` : ' across your library'}`
                 : mode === 'discover'
-                  ? 'Images that belong together, without needing a label.'
+                  ? 'Media that belong together, without needing a label.'
                   : mode === 'history'
                     ? 'Every search is another way back.'
-                    : `${indexedCount.toLocaleString()} images. Find the one you have in mind.`}
+                    : `${indexedCount.toLocaleString()} files. Find the one you have in mind.`}
             </p>
           </div>
           {#if mode === 'all' || mode === 'folders'}<div class="view-toggle">
@@ -567,13 +584,11 @@
               }}
             >
               <span class="search-icon">⌕</span><input
-                aria-label={reference
-                  ? 'Refine similar images'
-                  : 'Search images'}
+                aria-label={reference ? 'Refine similar media' : 'Search media'}
                 bind:value={query}
                 placeholder={reference
-                  ? 'Refine these images… try “outside” or “on the sofa”'
-                  : 'Describe an image… “cats sleeping in the sunshine”'}
+                  ? 'Refine these matches… try “outside” or “on the sofa”'
+                  : 'Describe a photo or video… “cats sleeping in the sunshine”'}
               /><kbd>↵</kbd><button disabled={searching}
                 >{searching ? 'Searching…' : 'Search'}</button
               >
@@ -620,9 +635,9 @@
           </div>
           {#if reference}<div class="reference-chip">
               <img src={preview(reference)} alt={reference.name} /><span
-                >Finding images like <strong>{reference.name}</strong></span
+                >Finding media like <strong>{reference.name}</strong></span
               ><button
-                aria-label="Clear reference image"
+                aria-label="Clear reference media"
                 onclick={() => {
                   reference = null;
                   void execute();
@@ -658,7 +673,7 @@
                 ><span
                   ><strong>{label(entry)}</strong><small
                     >{entry.referenceImageId
-                      ? 'With reference image · '
+                      ? 'With reference media · '
                       : ''}{entry.folderId && entry.folderId !== 'root'
                       ? folders.find((f) => f.id === entry.folderId)?.name ||
                         'Previous folder'
@@ -677,7 +692,7 @@
         {:else if mode === 'discover' && groupId === null}
           <div class="section-heading">
             <span>{groups.length} visual groups</span><span
-              >Made from the images themselves</span
+              >Made from the media themselves</span
             >
           </div>
           <div class="group-grid">
@@ -694,7 +709,7 @@
                 <div class="group-caption">
                   <span
                     ><strong>Visual group {group.id + 1}</strong><small
-                      >{group.count.toLocaleString()} images</small
+                      >{group.count.toLocaleString()} files</small
                     ></span
                   ><span>↗</span>
                 </div></button
@@ -703,7 +718,7 @@
           {#if !groups.length}<div class="empty">
               <span>✳</span>
               <h2>Room for discovery.</h2>
-              <p>Index some images to see their visual connections.</p>
+              <p>Index some media to see their visual connections.</p>
             </div>{/if}
         {:else}
           {#if mode === 'folders' && !searchView}
@@ -717,7 +732,7 @@
                 {#each children.slice((folderPage - 1) * 48, folderPage * 48) as folder (folder.id)}<button
                     onclick={() => navigate('folders', folder.id)}
                     ><span>▱</span><strong>{folder.name}</strong><small
-                      >{folder.count} images</small
+                      >{folder.count} files</small
                     ><span>↗</span></button
                   >{/each}
               </div>
@@ -746,7 +761,7 @@
                     ? 'IN THIS GROUP'
                     : 'THE COLLECTION'}</span
             ><span
-              >{resultCount.toLocaleString()} images {searchView
+              >{resultCount.toLocaleString()} files {searchView
                 ? '· best match first'
                 : '· sorted by path'}</span
             >
@@ -768,7 +783,13 @@
                       loading="lazy"
                       width={image.width}
                       height={image.height}
-                    /><span class="image-overlay">View image ↗</span></button
+                    />{#if image.mediaType === 'video'}<span class="media-badge"
+                        >▶ {durationLabel(image.duration)}</span
+                      >{/if}<span class="image-overlay"
+                      >{image.mediaType === 'video'
+                        ? 'Play video'
+                        : 'View image'} ↗</span
+                    ></button
                   >
                   <div class="image-caption">
                     <div>
@@ -782,7 +803,7 @@
                     <button
                       class="similar-button"
                       title="Find similar"
-                      aria-label={`Find images similar to ${image.name}`}
+                      aria-label={`Find media similar to ${image.name}`}
                       onclick={() => similar(image)}>✳</button
                     >
                   </div>
@@ -797,10 +818,10 @@
                 </h2>
                 <p>
                   {searchView
-                    ? 'Choose a broader search level, try another description, or choose a different reference image.'
+                    ? 'Choose a broader search level, try another description, or choose a different reference file.'
                     : mode === 'folders'
                       ? 'Open a subfolder to continue exploring.'
-                      : 'Check your configured image folder and rescan the library.'}
+                      : 'Check your configured media folder and rescan the library.'}
                 </p>
               </div>{/if}
           {/if}
@@ -837,21 +858,29 @@
     >
       <div class="viewer-top">
         <span>{viewer.name}</span><button
-          aria-label="Close image viewer"
+          aria-label="Close media viewer"
           onclick={() => (viewer = null)}>×</button
         >
       </div>
       <div class="viewer-image">
-        <button aria-label="Previous image" onclick={() => moveViewer(-1)}
+        <button aria-label="Previous item" onclick={() => moveViewer(-1)}
           >←</button
-        ><img src={preview(viewer)} alt={viewer.name} /><button
-          aria-label="Next image"
+        >{#if viewer.mediaType === 'video'}
+          {#key viewer.id}
+            <VideoPlayer item={viewer} />
+          {/key}
+        {:else}<img src={preview(viewer)} alt={viewer.name} />{/if}<button
+          aria-label="Next item"
           onclick={() => moveViewer(1)}>→</button
         >
       </div>
       <div class="viewer-bottom">
         <span class="truncate"
-          >{viewer.path}<small>{viewer.width} × {viewer.height} preview</small
+          >{viewer.path}<small
+            >{viewer.width} × {viewer.height} preview{viewer.mediaType ===
+            'video'
+              ? ` · ${durationLabel(viewer.duration)} video`
+              : ''}</small
           ></span
         >
         <div>

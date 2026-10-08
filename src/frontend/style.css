@@ -842,7 +842,8 @@ h2 {
   background: #0b100a;
   padding: 12px;
 }
-.viewer-image img {
+.viewer-image img,
+.viewer-image video {
   max-width: calc(100% - 100px);
   max-height: 100%;
   object-fit: contain;
@@ -1070,7 +1071,8 @@ h2 {
   .viewer-image {
     gap: 4px;
   }
-  .viewer-image img {
+  .viewer-image img,
+  .viewer-image video {
     max-width: calc(100% - 60px);
   }
   .history-list > button {
@@ -1114,4 +1116,34 @@ h2 {
   .similarity-filter {
     flex: 1 1 320px;
   }
+}
+
+.media-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  padding: 4px 7px;
+  background: #10180dde;
+  color: #fff;
+  border-radius: 5px;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.video-player {
+  max-width: calc(100% - 100px);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+.viewer-image .video-player video {
+  max-width: 100%;
+  min-height: 0;
+}
+.video-player p {
+  max-width: 480px;
+  margin: 8px 0;
+  font-size: 13px;
 }

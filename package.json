@@ -6,22 +6,19 @@
   "type": "module",
   "scripts": {
     "dev": "bun scripts/dev.ts",
-    "dev:backend": "bun --watch src/backend/server.ts",
+    "dev:backend": "bun scripts/start.ts --reload",
     "dev:frontend": "vite --host 127.0.0.1",
     "build": "vite build",
-    "start": "bun src/backend/server.ts",
+    "start": "bun scripts/start.ts",
     "check": "svelte-check --tsconfig ./tsconfig.json && tsc --noEmit",
-    "test": "bun test tests",
-    "lint": "eslint . --max-warnings 0",
-    "lint:fix": "eslint . --fix --max-warnings 0",
-    "benchmark": "bun scripts/benchmark.ts",
-    "format": "prettier --write src scripts tests vite.config.ts svelte.config.js eslint.config.js package.json tsconfig.json"
+    "test": "bun test tests/history.test.ts && .venv/bin/python -m pytest",
+    "lint": "eslint . --max-warnings 0 && .venv/bin/ruff check backend scripts",
+    "lint:fix": "eslint . --fix --max-warnings 0 && .venv/bin/ruff check backend scripts --fix",
+    "benchmark": "uv run --extra cpu python -m locallery.benchmark",
+    "format": "prettier --write src scripts tests vite.config.ts svelte.config.js eslint.config.js package.json tsconfig.json && .venv/bin/ruff format backend scripts"
   },
   "dependencies": {
-    "sharp": "^0.34.4",
-    "svelte": "^5.39.0",
-    "usearch": "^2.26.2",
-    "yaml": "^2.8.1"
+    "svelte": "^5.39.0"
   },
   "devDependencies": {
     "@eslint/js": "^9",

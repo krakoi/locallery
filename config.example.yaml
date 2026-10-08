@@ -1,10 +1,16 @@
-# Optional <cwd>/.locallery/config.yml. Paths resolve against the working directory.
-# Omit library.path to index the working directory itself.
+# Optional <cwd>/.locallery/config.yml; library paths resolve against the working directory.
 library:
   path: ./test/images
-# Override ~/.locallery/config.yml defaults only when needed.
+# Shared defaults live in ~/.locallery/config.yml.
 # server:
 #   port: 3000
 # embedding:
-#   base_url: http://127.0.0.1:4096/v1
-#   timeout_seconds: 60
+#   model: google/embeddinggemma-2   # Or an absolute local Transformers checkpoint directory
+#   revision: main                 # Optional Hugging Face commit/tag
+#   device: auto                   # auto, cpu, cuda, cuda:N, mps
+#   dtype: auto                    # auto, float32, bfloat16 (never float16)
+# video:
+#   fps: 1
+#   max_frames: 32                # 1–48; one embedding for the sampled clip
+#   overflow_strategy: uniform    # uniform or truncate
+#   add_timestamps: true

@@ -10,6 +10,8 @@ export default defineConfig(
   {
     ignores: [
       'node_modules/**',
+      '.venv/**',
+      '.locallery/**',
       'dist/**',
       'data/**',
       '.test-artifacts/**',
@@ -28,7 +30,6 @@ export default defineConfig(
   },
   {
     files: [
-      'src/backend/**/*.ts',
       'scripts/**/*.ts',
       'tests/**/*.ts',
       '*.js',

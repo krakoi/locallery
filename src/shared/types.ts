@@ -5,6 +5,8 @@ export interface ImageItem {
   folderId: string;
   width: number;
   height: number;
+  mediaType: 'image' | 'video';
+  duration: number | null;
   score?: number;
 }
 
