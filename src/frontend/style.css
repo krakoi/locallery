@@ -86,26 +86,10 @@ button:hover:not(:disabled) {
   margin-top: 6px;
 }
 .brandmark {
-  position: relative;
-  border: 1px solid #8ea36c;
-  border-radius: 10px;
-  width: 39px;
+  width: 42px;
   height: 42px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--accent);
-  font-family: Georgia, serif;
-  font-size: 38px;
-  font-weight: 400;
-}
-.brandmark span {
-  position: absolute;
-  right: 1px;
-  top: -6px;
-  font-family: Arial;
-  font-size: 17px;
-  background: #121713;
+  display: block;
+  flex-shrink: 0;
 }
 .nav-label {
   font-size: 9px;
@@ -181,8 +165,7 @@ nav button.active {
   align-items: center;
   gap: 8px;
 }
-.local-indicator > span,
-.index-status > span {
+.local-indicator > span {
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -207,33 +190,6 @@ main {
   margin-left: 238px;
   flex: 1;
   min-width: 0;
-}
-.topbar {
-  height: 72px;
-  padding: 0 42px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--line);
-  font-size: 11px;
-}
-.topbar-path {
-  color: #b4bdac;
-}
-.topbar-path span {
-  color: #515d49;
-  padding: 0 13px;
-}
-.index-status {
-  display: flex;
-  gap: 9px;
-  align-items: center;
-  color: #a6b399;
-  font-size: 10px;
-}
-.index-status > .working {
-  background: #ddb775;
-  animation: pulse 2s infinite;
 }
 .content {
   padding: 44px 42px 40px;
@@ -705,7 +661,7 @@ h2 {
   margin-bottom: 20px;
 }
 .index-screen {
-  min-height: calc(100vh - 72px);
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -887,11 +843,6 @@ h2 {
     transform: rotate(360deg);
   }
 }
-@keyframes pulse {
-  50% {
-    opacity: 0.4;
-  }
-}
 @keyframes progress {
   0% {
     transform: translateX(-100%);
@@ -929,9 +880,6 @@ h2 {
   }
   .content {
     padding: 30px 25px;
-  }
-  .topbar {
-    padding: 0 25px;
   }
   .image-grid {
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -991,10 +939,6 @@ h2 {
   }
   main {
     margin-left: 0;
-  }
-  .topbar {
-    height: 48px;
-    padding: 0 18px;
   }
   .content {
     padding: 28px 18px;

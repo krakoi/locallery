@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import appIcon from './assets/locallery.svg';
   import VideoPlayer from './VideoPlayer.svelte';
   import type {
     Folder,
@@ -393,7 +394,7 @@
         e.preventDefault();
         void navigate('all');
       }}
-      ><span class="brandmark">a<span>↗</span></span><span
+      ><img class="brandmark" src={appIcon} alt="" width="42" height="42" /><span
         >locallery<small>A little more discoverable.</small></span
       ></a
     >
@@ -449,25 +450,6 @@
     </div>
   </aside>
   <main>
-    <header class="topbar">
-      <div class="topbar-path">
-        Library <span>/</span>
-        {mode === 'discover'
-          ? 'Discover'
-          : mode === 'history'
-            ? 'History'
-            : mode === 'folders'
-              ? 'Folders'
-              : 'All media'}
-      </div>
-      <div class="index-status">
-        <span class={{ working: progress?.busy }}></span>{progress?.busy
-          ? 'Indexing library'
-          : progress
-            ? 'Index ready'
-            : 'Connecting'}
-      </div>
-    </header>
     {#if !progress || progress.busy}
       <section class="index-screen">
         <div class="eyebrow">MAKING CONNECTIONS</div>

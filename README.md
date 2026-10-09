@@ -137,6 +137,8 @@ bun run format    # Prettier and Ruff
 
 The backend is Python/FastAPI with SQLite and USearch. The frontend is Svelte/TypeScript. Shared API types are in `src/shared/types.ts`. Backend tests use injected embedders and do not download model weights; video tests require FFmpeg. Startup tests verify that prompted folder selections survive a restart and that defaults and CLI overrides do not create a local config.
 
+The photo-album and magnifying-glass icon is shared by the sidebar and browser favicon in `src/frontend/assets/locallery.svg`. Icon integration passed `bun run check` and `bun run build`; browser appearance has not been manually verified.
+
 For a check with the actual model and a small library:
 
 ```sh
